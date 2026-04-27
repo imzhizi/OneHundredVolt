@@ -16,12 +16,6 @@ struct OneHundredVoltApp: App {
         _ = NowPlayingService.shared
         SyncService.shared.recoverIfNeeded()
         configureAppearance()
-        // 未登录时提前预热 WKWebView 进程，避免首次点击登录时 5-10s 冷启动卡顿
-        if KeychainService.load(forKey: KeychainService.authTokenKey) == nil {
-            DispatchQueue.main.async {
-                LoginWebPreloader.shared.preload()
-            }
-        }
     }
 
     var body: some Scene {

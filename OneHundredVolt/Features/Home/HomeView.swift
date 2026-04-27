@@ -348,16 +348,30 @@ private struct AlbumCardView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: Theme.Spacing.xs) {
-            CachedImage(urlString: album.coverUrl) {
-                RoundedRectangle(cornerRadius: Theme.CornerRadius.cover)
-                    .fill(Theme.Colors.cardBackground)
+            ZStack(alignment: .bottomTrailing) {
+                CachedImage(urlString: album.coverUrl) {
+                    RoundedRectangle(cornerRadius: Theme.CornerRadius.cover)
+                        .fill(Theme.Colors.cardBackground)
+                }
+                .frame(width: 90, height: 90)
+                .clipShape(RoundedRectangle(cornerRadius: Theme.CornerRadius.cover))
+                .opacity(album.isAccessible ? 1.0 : 0.5)
+
+                // 付费未购买：右下角锁图标
+                if !album.isAccessible {
+                    Image(systemName: "lock.fill")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundColor(.white)
+                        .padding(4)
+                        .background(Color.black.opacity(0.55))
+                        .clipShape(RoundedRectangle(cornerRadius: 5))
+                        .padding(4)
+                }
             }
-            .frame(width: 90, height: 90)
-            .clipShape(RoundedRectangle(cornerRadius: Theme.CornerRadius.cover))
 
             Text(album.title)
                 .font(Theme.Typography.caption)
-                .foregroundColor(Theme.Colors.textPrimary)
+                .foregroundColor(album.isAccessible ? Theme.Colors.textPrimary : Theme.Colors.textSecondary)
                 .lineLimit(1)
                 .truncationMode(.tail)
                 .frame(width: 90, alignment: .leading)

@@ -6,7 +6,6 @@ struct SettingsView: View {
     @State private var showClearDataAlert = false
     @State private var showResyncFlow = false
     @State private var showLoginFlow = false
-    @State private var isPreloadingLogin = false
 
     private let api = AfdianAPIService.shared
     private let sync = SyncService.shared
@@ -40,24 +39,11 @@ struct SettingsView: View {
                             }
                         } else {
                             Button {
-                                isPreloadingLogin = true
-                                LoginWebPreloader.shared.preload()
-                                DispatchQueue.main.async {
-                                    showLoginFlow = true
-                                }
+                                showLoginFlow = true
                             } label: {
-                                if isPreloadingLogin {
-                                    HStack(spacing: 6) {
-                                        ProgressView().tint(Theme.Colors.accent)
-                                        Text("正在加载...")
-                                            .foregroundColor(Theme.Colors.accent)
-                                    }
-                                } else {
-                                    Label("重新登录", systemImage: "arrow.right.circle.fill")
-                                        .foregroundColor(Theme.Colors.accent)
-                                }
+                                Label("重新登录", systemImage: "arrow.right.circle.fill")
+                                    .foregroundColor(Theme.Colors.accent)
                             }
-                            .disabled(isPreloadingLogin)
                         }
                     } header: {
                         sectionHeader("账户")
@@ -178,10 +164,7 @@ struct SettingsView: View {
                 )
             }
             // 重新登录流程
-            .fullScreenCover(isPresented: $showLoginFlow, onDismiss: {
-                isPreloadingLogin = false
-                LoginWebPreloader.shared.reset()
-            }) {
+            .fullScreenCover(isPresented: $showLoginFlow) {
                 LoginWebView(hasCompletedOnboarding: .constant(false))
             }
         }

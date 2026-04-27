@@ -99,28 +99,52 @@ private struct AlbumRowView: View {
 
     var body: some View {
         HStack(spacing: Theme.Spacing.md) {
-            CachedImage(urlString: album.coverUrl) {
-                RoundedRectangle(cornerRadius: Theme.CornerRadius.cover)
-                    .fill(Theme.Colors.cardBackground)
+            ZStack(alignment: .bottomTrailing) {
+                CachedImage(urlString: album.coverUrl) {
+                    RoundedRectangle(cornerRadius: Theme.CornerRadius.cover)
+                        .fill(Theme.Colors.cardBackground)
+                }
+                .frame(width: 60, height: 60)
+                .clipShape(RoundedRectangle(cornerRadius: Theme.CornerRadius.cover))
+                .opacity(album.isAccessible ? 1.0 : 0.5)
+
+                // 付费未购买：右下角锁图标
+                if !album.isAccessible {
+                    Image(systemName: "lock.fill")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundColor(.white)
+                        .padding(3)
+                        .background(Color.black.opacity(0.55))
+                        .clipShape(RoundedRectangle(cornerRadius: 4))
+                        .padding(3)
+                }
             }
-            .frame(width: 60, height: 60)
-            .clipShape(RoundedRectangle(cornerRadius: Theme.CornerRadius.cover))
 
             VStack(alignment: .leading, spacing: Theme.Spacing.xs) {
                 Text(album.title)
                     .font(Theme.Typography.subheadline)
-                    .foregroundColor(Theme.Colors.textPrimary)
+                    .foregroundColor(album.isAccessible ? Theme.Colors.textPrimary : Theme.Colors.textSecondary)
                     .lineLimit(2)
 
-                HStack(spacing: Theme.Spacing.xs) {
-                    Text("\(album.audioCount) 期")
-                    if album.totalDuration > 0 {
-                        Text("·")
-                        Text(album.totalDuration.humanReadable)
+                if album.isAccessible {
+                    HStack(spacing: Theme.Spacing.xs) {
+                        Text("\(album.audioCount) 期")
+                        if album.totalDuration > 0 {
+                            Text("·")
+                            Text(album.totalDuration.humanReadable)
+                        }
                     }
+                    .font(Theme.Typography.caption)
+                    .foregroundColor(Theme.Colors.textSecondary)
+                } else {
+                    HStack(spacing: 4) {
+                        Image(systemName: "lock.fill")
+                            .font(.system(size: 10))
+                        Text("未购买")
+                    }
+                    .font(Theme.Typography.caption)
+                    .foregroundColor(Theme.Colors.textSecondary)
                 }
-                .font(Theme.Typography.caption)
-                .foregroundColor(Theme.Colors.textSecondary)
             }
 
             Spacer()

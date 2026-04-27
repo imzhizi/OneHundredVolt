@@ -96,7 +96,14 @@ final class AfdianAPIService {
         }
     }
 
-    // MARK: - 2. 获取创作者专辑列表（已购买 bought=1）
+    // MARK: - 2. 获取创作者专辑列表（纯列表拉取，不做权限探测）
+    //
+    // bought=1  → isAccessible=true（已购买）
+    // bought=0 且 postCount=0 → 跳过，不入库
+    // bought=0 且 postCount>0 → isAccessible=false（暂定，由 SyncService 探测后更新）
+    //
+    // 权限探测（probeAlbumAccessibility）由 SyncService 在拿到列表后逐一调用，
+    // 以便在进度条上实时反馈
 
     func fetchAlbums(creatorId: String) async throws -> [Album] {
         var allAlbums: [Album] = []
@@ -111,58 +118,92 @@ final class AfdianAPIService {
             let resp = try JSONDecoder().decode(AlbumListResponse.self, from: data)
             guard resp.ec == 200 else { throw APIError.apiError(resp.em ?? "未知错误") }
 
-            let albums = resp.data.list
-                .filter { $0.bought == 1 }  // 只取已购买的专辑
-                .enumerated()
-                .map { index, item in
-                    Album(
-                        id: item.albumId,
-                        creatorId: creatorId,
-                        title: item.title,
-                        coverUrl: item.cover,
-                        description: item.content?.isEmpty == false ? item.content : nil,
-                        audioCount: item.postCount,
-                        totalDuration: 0,   // 目录接口才能计算总时长
-                        sortOrder: (page - 1) * 20 + index,
-                        lastSyncedAt: nil
-                    )
-                }
-            allAlbums.append(contentsOf: albums)
+            for item in resp.data.list {
+                guard item.postCount > 0 else { continue }
+                let album = Album(
+                    id: item.albumId,
+                    creatorId: creatorId,
+                    title: item.title,
+                    coverUrl: item.cover,
+                    description: item.content?.isEmpty == false ? item.content : nil,
+                    audioCount: item.postCount,
+                    totalDuration: 0,
+                    sortOrder: allAlbums.count,
+                    lastSyncedAt: nil,
+                    isAccessible: item.bought == 1  // bought=0 暂设 false，SyncService 会探测并更新
+                )
+                allAlbums.append(album)
+            }
+
             hasMore = resp.data.hasMore == 1
             page += 1
         }
         return allAlbums
     }
 
-    // MARK: - 3. 获取专辑完整目录（get-album-catalog，一次返回全部）
+    /// 探测专辑播放权限：取目录第一集，调 get-detail 检查 has_right
+    /// - Returns: true = 免费可播放；false = 付费未购买或探测失败
+    /// - Note: 调用方负责在调用前 sleep，控制 QPS
+    func probeAlbumAccessibility(albumId: String) async -> Bool {
+        guard let catalogData = try? await request(
+            path: "/api/user/get-album-catalog",
+            params: ["album_id": albumId, "page": "1"]
+        ),
+        let catalog = try? JSONDecoder().decode(AlbumCatalogResponse.self, from: catalogData),
+        let firstPost = catalog.data.list.first(where: { $0.hasAudio == 1 })
+        else { return false }
+
+        guard let detailData = try? await request(
+            path: "/api/post/get-detail",
+            params: ["post_id": firstPost.postId]
+        ),
+        let detail = try? JSONDecoder().decode(PostDetailResponse.self, from: detailData)
+        else { return false }
+
+        return detail.data?.post.hasRight == 1
+    }
+
+    // MARK: - 3. 获取专辑目录（支持分页）
 
     func fetchAlbumCatalog(albumId: String) async throws -> [AudioItem] {
-        let data = try await request(
-            path: "/api/user/get-album-catalog",
-            params: ["album_id": albumId]
-        )
-        let resp = try JSONDecoder().decode(AlbumCatalogResponse.self, from: data)
-        guard resp.ec == 200 else { throw APIError.apiError(resp.em ?? "未知错误") }
+        var allItems: [AudioItem] = []
+        var creatorId = ""
+        var page = 1
+        var hasMore = true
 
-        // 找到第一个有 creatorId 的帖子，其 userId 即为 creatorId
-        let creatorId = resp.data.list.first?.userId ?? ""
+        while hasMore {
+            let data = try await request(
+                path: "/api/user/get-album-catalog",
+                params: ["album_id": albumId, "page": "\(page)"]
+            )
+            let resp = try JSONDecoder().decode(AlbumCatalogResponse.self, from: data)
+            guard resp.ec == 200 else { throw APIError.apiError(resp.em ?? "未知错误") }
 
-        return resp.data.list
-            .filter { $0.hasAudio == 1 }
-            .map { post in
-                AudioItem(
-                    id: post.postId,
-                    albumId: albumId,
-                    creatorId: creatorId,
-                    title: post.title,
-                    coverUrl: post.cover,
-                    duration: TimeInterval(post.ext?.audioDuration ?? 0),
-                    sortOrder: post.rank ?? 0,
-                    publishTime: Date(timeIntervalSince1970: TimeInterval(post.publishTime ?? 0)),
-                    audioUrl: nil   // 目录不含 URL，播放时再获取
-                )
+            if creatorId.isEmpty, let first = resp.data.list.first {
+                creatorId = first.userId
             }
-            .sorted { $0.sortOrder < $1.sortOrder }
+
+            let items = resp.data.list
+                .filter { $0.hasAudio == 1 }
+                .map { post in
+                    AudioItem(
+                        id: post.postId,
+                        albumId: albumId,
+                        creatorId: creatorId,
+                        title: post.title,
+                        coverUrl: post.cover,
+                        duration: TimeInterval(post.ext?.audioDuration ?? 0),
+                        sortOrder: post.rank ?? 0,
+                        publishTime: Date(timeIntervalSince1970: TimeInterval(post.publishTime ?? 0)),
+                        audioUrl: nil
+                    )
+                }
+            allItems.append(contentsOf: items)
+            hasMore = resp.data.hasMore == 1
+            page += 1
+        }
+
+        return allItems.sorted { $0.sortOrder < $1.sortOrder }
     }
 
     // MARK: - 4. 获取单个帖子详情（播放时获取带签名的 audio URL）

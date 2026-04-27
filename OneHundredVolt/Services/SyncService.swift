@@ -77,13 +77,37 @@ final class SyncService {
                 let baseProgress = 0.1 + Double(i) / Double(total) * 0.85
                 await setProgress("同步 \(creator.name)...", baseProgress)
 
-                // 拉专辑列表
-                let albums = try await api.fetchAlbums(creatorId: creator.id)
+                // Step A：拉专辑列表（快，无 sleep）
+                await setProgress("获取 \(creator.name) 专辑列表...", baseProgress)
+                var albums = try await api.fetchAlbums(creatorId: creator.id)
                 db.upsertAlbums(albums)
 
-                // 逐专辑拉目录，每次请求间隔 0.3s，避免请求过快影响服务器
-                for (j, album) in albums.enumerated() {
-                    let albumProgress = baseProgress + Double(j) / Double(albums.count) * (0.85 / Double(total))
+                // Step B：对 bought=0 的专辑逐一探测权限（免费 or 付费未购）
+                // 每个专辑探测前 sleep 500ms，QPS ≤ 2/s，同时在进度条实时显示
+                let unknownAlbums = albums.filter { !$0.isAccessible }
+                for (j, album) in unknownAlbums.enumerated() {
+                    let probeProgress = baseProgress + Double(j) / Double(max(unknownAlbums.count, 1)) * (0.85 / Double(total) * 0.3)
+                    await setProgress("检测权限 \(creator.name) — \(album.title)...", probeProgress)
+                    try await Task.sleep(nanoseconds: 500_000_000) // 500ms，控制 QPS
+                    let accessible = await api.probeAlbumAccessibility(albumId: album.id)
+                    if accessible {
+                        // 更新内存中的 album
+                        if let idx = albums.firstIndex(where: { $0.id == album.id }) {
+                            albums[idx].isAccessible = true
+                        }
+                        // 更新数据库
+                        var updated = album
+                        updated.isAccessible = true
+                        db.upsertAlbum(updated)
+                    }
+                }
+
+                // Step C：只对有权限的专辑拉取音频目录
+                // 每次请求间隔 0.3s
+                let accessibleAlbums = albums.filter { $0.isAccessible }
+                for (j, album) in accessibleAlbums.enumerated() {
+                    let albumProgress = baseProgress + 0.85 / Double(total) * 0.3
+                        + Double(j) / Double(max(accessibleAlbums.count, 1)) * (0.85 / Double(total) * 0.7)
                     await setProgress("同步 \(creator.name) — \(album.title)...", albumProgress)
 
                     if j > 0 { try await Task.sleep(nanoseconds: 300_000_000) } // 0.3s

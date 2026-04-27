@@ -135,26 +135,13 @@ struct WebViewRepresentable: UIViewRepresentable {
     let viewModel: LoginWebViewModel
 
     func makeUIView(context: Context) -> WKWebView {
-        // 优先复用预热好的 webView（已在后台加载完毕），否则临时创建
-        let webView: WKWebView
-        if let preloaded = LoginWebPreloader.shared.webView {
-            webView = preloaded
-        } else {
-            let config = WKWebViewConfiguration()
-            config.websiteDataStore = .default()
-            let wv = WKWebView(frame: .zero, configuration: config)
-            wv.backgroundColor = UIColor(Theme.Colors.background)
-            wv.isOpaque = false
-            wv.load(URLRequest(url: URL(string: "https://afdian.com/login")!))
-            webView = wv
-        }
+        let config = WKWebViewConfiguration()
+        config.websiteDataStore = .default()
+        let webView = WKWebView(frame: .zero, configuration: config)
+        webView.backgroundColor = UIColor(Theme.Colors.background)
+        webView.isOpaque = false
         webView.navigationDelegate = context.coordinator
-        // 若预热时已加载完成，手动通知 viewModel
-        if webView.isLoading {
-            viewModel.isLoading = true
-        } else {
-            viewModel.isLoading = false
-        }
+        webView.load(URLRequest(url: URL(string: "https://afdian.com/login")!))
         return webView
     }
 
