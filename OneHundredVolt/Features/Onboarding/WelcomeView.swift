@@ -3,6 +3,7 @@ import SwiftUI
 struct WelcomeView: View {
     @Binding var hasCompletedOnboarding: Bool
     @State private var showLogin = false
+    @State private var isPreloading = false
 
     var body: some View {
         ZStack {
@@ -38,11 +39,24 @@ struct WelcomeView: View {
                 // MARK: 登录按钮区
                 VStack(spacing: Theme.Spacing.md) {
                     Button {
-                        showLogin = true
+                        isPreloading = true
+                        // 给预热一帧时间，然后立即打开 cover
+                        DispatchQueue.main.async {
+                            showLogin = true
+                        }
                     } label: {
-                        Text("登录爱发电账户")
+                        if isPreloading {
+                            HStack(spacing: 8) {
+                                ProgressView().tint(.white)
+                                Text("正在加载...")
+                            }
                             .primaryButtonStyle()
+                        } else {
+                            Text("登录爱发电账户")
+                                .primaryButtonStyle()
+                        }
                     }
+                    .disabled(isPreloading)
 
                     Text("登录即表示同意 爱发电服务条款")
                         .font(Theme.Typography.caption)
@@ -56,7 +70,9 @@ struct WelcomeView: View {
             // 提前预热登录页 WebView，消除点击按钮后的白屏延迟
             LoginWebPreloader.shared.preload()
         }
-        .fullScreenCover(isPresented: $showLogin) {
+        .fullScreenCover(isPresented: $showLogin, onDismiss: {
+            isPreloading = false
+        }) {
             LoginWebView(hasCompletedOnboarding: $hasCompletedOnboarding)
         }
     }

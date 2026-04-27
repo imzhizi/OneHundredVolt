@@ -12,12 +12,16 @@ struct OneHundredVoltApp: App {
     }()
 
     init() {
-        // 预热单例服务
         _ = AudioPlayerService.shared
         _ = NowPlayingService.shared
-        // 检测上次同步是否被中断，若是则清除不完整数据
         SyncService.shared.recoverIfNeeded()
         configureAppearance()
+        // 未登录时提前预热 WKWebView 进程，避免首次点击登录时 5-10s 冷启动卡顿
+        if KeychainService.load(forKey: KeychainService.authTokenKey) == nil {
+            DispatchQueue.main.async {
+                LoginWebPreloader.shared.preload()
+            }
+        }
     }
 
     var body: some Scene {
@@ -39,10 +43,10 @@ struct OneHundredVoltApp: App {
         navAppearance.configureWithOpaqueBackground()
         navAppearance.backgroundColor = UIColor(Theme.Colors.background)
         navAppearance.titleTextAttributes = [
-            .foregroundColor: UIColor.white
+            .foregroundColor: UIColor(Theme.Colors.accent)
         ]
         navAppearance.largeTitleTextAttributes = [
-            .foregroundColor: UIColor.white
+            .foregroundColor: UIColor(Theme.Colors.accent)
         ]
         UINavigationBar.appearance().standardAppearance  = navAppearance
         UINavigationBar.appearance().scrollEdgeAppearance = navAppearance
@@ -61,6 +65,7 @@ struct OneHundredVoltApp: App {
 
 struct RootView: View {
     @Binding var hasCompletedOnboarding: Bool
+    @State private var showRelogin = false
 
     var body: some View {
         Group {
@@ -74,5 +79,12 @@ struct RootView: View {
         }
         .animation(.easeInOut(duration: 0.3), value: hasCompletedOnboarding)
         .preferredColorScheme(.dark)
+        .sheet(isPresented: $showRelogin) {
+            LoginWebView(hasCompletedOnboarding: $hasCompletedOnboarding)
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .tokenExpired)) { _ in
+            guard hasCompletedOnboarding, !showRelogin else { return }
+            showRelogin = true
+        }
     }
 }

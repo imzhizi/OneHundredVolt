@@ -24,25 +24,29 @@ struct AlbumDetailView: View {
                     albumHeader
 
                     Section {
-                        if viewModel.isLoading {
-                            // 骨架屏：加载中显示占位行
-                            ForEach(0..<6, id: \.self) { _ in
-                                skeletonRow
-                            }
-                        } else {
-                            ForEach(Array(viewModel.displayItems.enumerated()), id: \.element.id) { index, item in
-                                audioRow(item: item, index: index)
-                                    .onTapGesture {
-                                        postDetailURL = URL(string: "https://afdian.com/p/\(item.id)")
-                                    }
+                        VStack(spacing: 0) {
+                            if viewModel.isLoading {
+                                ForEach(0..<6, id: \.self) { _ in
+                                    skeletonRow
+                                }
+                            } else {
+                                ForEach(Array(viewModel.displayItems.enumerated()), id: \.element.id) { index, item in
+                                    audioRow(item: item, index: index)
+                                        .onTapGesture {
+                                            postDetailURL = URL(string: "https://afdian.com/p/\(item.id)")
+                                        }
 
-                                if index < viewModel.displayItems.count - 1 {
-                                    Divider()
-                                        .background(Theme.Colors.divider)
-                                        .padding(.leading, 16 + 44 + 12)
+                                    if index < viewModel.displayItems.count - 1 {
+                                        Divider()
+                                            .background(Theme.Colors.divider)
+                                            .padding(.leading, Theme.Spacing.sm + 20 + Theme.Spacing.sm + 44 + Theme.Spacing.sm)
+                                    }
                                 }
                             }
                         }
+                        .background(Theme.Colors.cardBackground)
+                        .clipShape(RoundedRectangle(cornerRadius: Theme.CornerRadius.card))
+                        .padding(.horizontal, Theme.Spacing.md)
                     }
                 }
                 .padding(.bottom, player.currentItem != nil ? 80 : 0)
@@ -108,7 +112,7 @@ struct AlbumDetailView: View {
                 .fill(Theme.Colors.cardBackground)
                 .frame(width: 36, height: 12)
         }
-        .padding(.horizontal, Theme.Spacing.md)
+        .padding(.horizontal, Theme.Spacing.sm)
         .padding(.vertical, 12)
         .shimmer()
     }
@@ -296,7 +300,7 @@ struct AlbumDetailView: View {
             }
             .buttonStyle(.plain)
         }
-        .padding(.horizontal, Theme.Spacing.md)
+        .padding(.horizontal, Theme.Spacing.sm)
         .padding(.vertical, 12)
         .contentShape(Rectangle())
     }

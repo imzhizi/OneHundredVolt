@@ -47,7 +47,11 @@ final class ImageCache {
         let fileURL = diskFileURL(for: urlString)
         DispatchQueue.global(qos: .utility).async {
             guard let data = image.jpegData(compressionQuality: 0.85) else { return }
-            try? data.write(to: fileURL, options: .atomic)
+            do {
+                try data.write(to: fileURL, options: .atomic)
+            } catch {
+                print("[ImageCache] 磁盘写入失败: \(error)")
+            }
         }
     }
 

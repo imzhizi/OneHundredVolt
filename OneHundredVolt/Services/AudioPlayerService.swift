@@ -27,7 +27,9 @@ final class AudioPlayerService {
     // MARK: - 播放状态（UI 观察这些属性）
 
     private(set) var currentItem: AudioItem?    // 当前播放的单集，nil 时 MiniPlayer 消失
-    var playlist: [AudioItem] = []              // playlist[0] == currentItem（保持一致）
+    var playlist: [AudioItem] = [] {
+        didSet { persistPlaylist() }
+    }                                           // playlist[0] == currentItem（保持一致）
 
     private(set) var isPlaying: Bool = false
     private(set) var isLoading: Bool = false
@@ -65,6 +67,24 @@ final class AudioPlayerService {
     private let progressStore = PlaybackProgressStore.shared
     private let api = AfdianAPIService.shared
 
+    private static let playlistKey = "saved_playlist_v1"
+
+    private func persistPlaylist() {
+        if playlist.isEmpty {
+            UserDefaults.standard.removeObject(forKey: Self.playlistKey)
+        } else if let data = try? JSONEncoder().encode(playlist) {
+            UserDefaults.standard.set(data, forKey: Self.playlistKey)
+        }
+    }
+
+    private func restorePlaylist() {
+        guard let data = UserDefaults.standard.data(forKey: Self.playlistKey),
+              let items = try? JSONDecoder().decode([AudioItem].self, from: data),
+              !items.isEmpty else { return }
+        playlist = items
+        currentItem = items[0]
+    }
+
     // MARK: - 便利计算属性
 
     var hasNext: Bool { playlist.count > 1 }
@@ -86,6 +106,7 @@ final class AudioPlayerService {
         }
         let savedRate = UserDefaults.standard.float(forKey: "playback_rate")
         playbackRate = savedRate > 0 ? savedRate : 1.0
+        restorePlaylist()
     }
 
     // MARK: - 播放控制（对外 API）
@@ -247,7 +268,7 @@ final class AudioPlayerService {
         currentTime = 0
         duration = item.duration
 
-        progressStore.setLastPlayed(postId: item.id)
+        progressStore.setLastPlayed(postId: item.id, creatorId: item.creatorId)
 
         Task {
             do {

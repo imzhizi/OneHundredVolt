@@ -8,9 +8,10 @@ final class PlaybackProgressStore {
     static let shared = PlaybackProgressStore()
 
     private let defaults = UserDefaults.standard
-    private let progressKey  = "playback_progress_v1"
-    private let lastPlayedKey = "last_played_post_id"
-    private let completedKey  = "playback_completed_v1"
+    private let progressKey       = "playback_progress_v1"
+    private let lastPlayedKey     = "last_played_post_id"
+    private let completedKey      = "playback_completed_v1"
+    private let creatorLastPlayedKey = "creator_last_played_v1"
 
     /// 防抖写 UserDefaults（避免每次进度更新都同步写磁盘）
     private var persistDebounceTask: DispatchWorkItem?
@@ -50,8 +51,17 @@ final class PlaybackProgressStore {
         persist()
     }
 
-    func setLastPlayed(postId: String) {
+    func setLastPlayed(postId: String, creatorId: String? = nil) {
         defaults.set(postId, forKey: lastPlayedKey)
+        if let creatorId, !creatorId.isEmpty {
+            var dict = (defaults.dictionary(forKey: creatorLastPlayedKey) as? [String: Date]) ?? [:]
+            dict[creatorId] = Date()
+            defaults.set(dict, forKey: creatorLastPlayedKey)
+        }
+    }
+
+    func lastPlayedDate(for creatorId: String) -> Date? {
+        (defaults.dictionary(forKey: creatorLastPlayedKey) as? [String: Date])?[creatorId]
     }
 
     /// 播放完成时调用：清除进度并标记为已完成

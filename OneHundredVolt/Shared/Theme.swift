@@ -9,8 +9,8 @@ enum Theme {
         static let background       = Color(hex: "#0A0A0C")
         static let secondaryBackground = Color(hex: "#141418")
         static let cardBackground   = Color(hex: "#1E1E24")
-        static let accent           = Color(hex: "#00D4AA")   // 青绿色 — "电"感
-        static let secondaryAccent  = Color(hex: "#FFB800")   // 琥珀黄 — 能量感
+        static let accent           = Color(hex: "#FFB800")   // 琥珀黄 — 闪电感
+        static let secondaryAccent  = Color(hex: "#00D4AA")   // 青绿色 — 备用强调色
         static let textPrimary      = Color.white
         static let textSecondary    = Color(hex: "#8E8E93")
         static let divider          = Color(hex: "#2C2C30")
@@ -18,7 +18,7 @@ enum Theme {
         static let warning          = Color(hex: "#FF9F0A")
 
         static let accentGradient = LinearGradient(
-            colors: [Color(hex: "#00D4AA"), Color(hex: "#0097A7")],
+            colors: [Color(hex: "#FFB800"), Color(hex: "#FF8C00")],
             startPoint: .topLeading,
             endPoint: .bottomTrailing
         )

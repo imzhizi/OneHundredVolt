@@ -2,14 +2,14 @@ import SwiftUI
 
 struct HomeView: View {
     @State private var viewModel = HomeViewModel()
-    @State private var selectedCreator: Creator?
     @State private var showSettings = false
     @State private var showPlayer = false
     @State private var scrollToPlaylist = false
     @State private var navigationPath = NavigationPath()
 
     private let player = AudioPlayerService.shared
-    private let progressStore = PlaybackProgressStore.shared
+
+    private let maxVisibleCreators = 3
 
     var body: some View {
         NavigationStack(path: $navigationPath) {
@@ -20,14 +20,19 @@ struct HomeView: View {
                     ScrollView {
                         LazyVStack(alignment: .leading, spacing: 0) {
 
-                            // MARK: 上次播放
-                            if let item = viewModel.continueListeningItem {
-                                continueListeningSection(item: item)
+                            // MARK: 空状态
+                            if viewModel.creators.isEmpty {
+                                emptyStateView
                             }
 
-                            // MARK: 创作者 + 专辑
-                            ForEach(viewModel.creators) { creator in
+                            // MARK: 创作者 + 专辑（最多显示前 3 个）
+                            ForEach(viewModel.creators.prefix(maxVisibleCreators)) { creator in
                                 creatorSection(creator: creator)
+                            }
+
+                            // MARK: 更多创作者入口
+                            if viewModel.creators.count > maxVisibleCreators {
+                                moreCreatorsRow
                             }
 
                             // MARK: 播放列表
@@ -59,7 +64,7 @@ struct HomeView: View {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button { showSettings = true } label: {
                         Image(systemName: "gearshape.fill")
-                            .foregroundColor(Theme.Colors.textSecondary)
+                            .foregroundColor(Theme.Colors.accent)
                     }
                 }
             }
@@ -84,62 +89,8 @@ struct HomeView: View {
                 showPlayer = true
             }
             .sheet(isPresented: $showSettings) { SettingsView() }
-            .sheet(item: $selectedCreator) { creator in CreatorView(creator: creator) }
             .fullScreenCover(isPresented: $showPlayer) { PlayerView() }
         }
-    }
-
-    // MARK: - 继续收听
-
-    private func continueListeningSection(item: AudioItem) -> some View {
-        VStack(alignment: .leading, spacing: Theme.Spacing.sm) {
-            sectionHeader("▶ 继续收听")
-
-            Button {
-                player.play(item: item)
-                showPlayer = true
-            } label: {
-                HStack(spacing: Theme.Spacing.md) {
-                    CachedImage(urlString: item.coverUrl) {
-                        RoundedRectangle(cornerRadius: Theme.CornerRadius.cover)
-                            .fill(Theme.Colors.cardBackground)
-                            .overlay(Image(systemName: "music.note").foregroundColor(Theme.Colors.textSecondary))
-                    }
-                    .frame(width: 56, height: 56)
-                    .clipShape(RoundedRectangle(cornerRadius: Theme.CornerRadius.cover))
-
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(item.title)
-                            .font(Theme.Typography.subheadline)
-                            .foregroundColor(Theme.Colors.textPrimary)
-                            .lineLimit(2)
-
-                        let ratio = viewModel.progressRatio(for: item)
-                        let elapsed = viewModel.progressTime(for: item)
-                        HStack(spacing: Theme.Spacing.xs) {
-                            GeometryReader { geo in
-                                ZStack(alignment: .leading) {
-                                    Capsule().fill(Theme.Colors.divider).frame(height: 3)
-                                    Capsule().fill(Theme.Colors.accent)
-                                        .frame(width: geo.size.width * ratio, height: 3)
-                                }
-                            }
-                            .frame(height: 3)
-                            Text("\(elapsed.formatted) / \(item.duration.formatted)")
-                                .font(Theme.Typography.mono)
-                                .foregroundColor(Theme.Colors.textSecondary)
-                                .fixedSize()
-                        }
-                    }
-                }
-                .padding(Theme.Spacing.md)
-                .cardStyle()
-            }
-            .buttonStyle(.plain)
-            .padding(.horizontal, Theme.Spacing.md)
-        }
-        .padding(.top, Theme.Spacing.md)
-        .padding(.bottom, Theme.Spacing.lg)
     }
 
     // MARK: - 创作者专辑
@@ -150,17 +101,20 @@ struct HomeView: View {
 
         return AnyView(
             VStack(alignment: .leading, spacing: Theme.Spacing.sm) {
-                Button {
-                    selectedCreator = creator
+                NavigationLink {
+                    CreatorView(creator: creator)
                 } label: {
                     HStack {
-                        sectionHeader(creator.name)
+                        Text(creator.name)
+                            .font(Theme.Typography.subheadline)
+                            .foregroundColor(Theme.Colors.textPrimary)
+                            .padding(.horizontal, Theme.Spacing.md)
                         Spacer()
                         Image(systemName: "chevron.right")
                             .font(.system(size: 12))
                             .foregroundColor(Theme.Colors.textSecondary)
+                            .padding(.trailing, Theme.Spacing.md)
                     }
-                    .padding(.horizontal, Theme.Spacing.md)
                 }
                 .buttonStyle(.plain)
 
@@ -180,6 +134,19 @@ struct HomeView: View {
             }
             .padding(.bottom, Theme.Spacing.lg)
         )
+    }
+
+    // MARK: - 更多创作者入口
+
+    private var moreCreatorsRow: some View {
+        NavigationLink {
+            AllCreatorsView(creators: viewModel.creators)
+        } label: {
+            sectionHeader("查看全部")
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .buttonStyle(.plain)
+        .padding(.bottom, Theme.Spacing.lg)
     }
 
     // MARK: - 播放列表
@@ -246,6 +213,35 @@ struct HomeView: View {
             }
         }
         .padding(.bottom, Theme.Spacing.lg)
+    }
+
+    // MARK: - 空状态
+
+    private var emptyStateView: some View {
+        VStack(spacing: Theme.Spacing.lg) {
+            Image(systemName: "bolt.slash")
+                .font(.system(size: 48, weight: .thin))
+                .foregroundColor(Theme.Colors.textSecondary.opacity(0.4))
+
+            VStack(spacing: Theme.Spacing.xs) {
+                Text("还没有内容")
+                    .font(Theme.Typography.subheadline)
+                    .foregroundColor(Theme.Colors.textPrimary)
+                Text("前往设置同步你的爱发电内容")
+                    .font(Theme.Typography.caption)
+                    .foregroundColor(Theme.Colors.textSecondary)
+            }
+
+            Button {
+                showSettings = true
+            } label: {
+                Text("去同步")
+                    .primaryButtonStyle()
+                    .frame(width: 160)
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 80)
     }
 
     // MARK: - 辅助

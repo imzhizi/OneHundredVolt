@@ -28,13 +28,13 @@ final class SyncService {
         return false
     }
 
-    // MARK: - 启动时检测：若上次同步被中断，清除脏数据
+    // MARK: - 启动时检测：若上次同步被中断，重置标志位
 
-    /// 应用启动时调用：检测到上次同步未完成则清除脏数据
+    /// 应用启动时调用：检测到上次同步未完成则重置标志位，保留已有数据
     func recoverIfNeeded() {
         guard UserDefaults.standard.bool(forKey: syncInProgressKey) else { return }
-        // 上次同步被中断，数据可能不完整，全部清除
-        db.clearAll()
+        // 上次同步被中断（如用户强杀 App），重置标志位即可
+        // 已同步的数据保留，用户可在设置页手动重新同步
         UserDefaults.standard.removeObject(forKey: syncInProgressKey)
     }
 

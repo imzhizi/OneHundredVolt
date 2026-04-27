@@ -3,7 +3,6 @@ import SwiftUI
 /// 创作者详情页：本地专辑列表 + 跳转爱发电主页
 struct CreatorView: View {
     let creator: Creator
-    @Environment(\.dismiss) private var dismiss
     @State private var viewModel: CreatorViewModel
 
     init(creator: Creator) {
@@ -12,59 +11,50 @@ struct CreatorView: View {
     }
 
     var body: some View {
-        NavigationStack {
-            ZStack {
-                Theme.Colors.background.ignoresSafeArea()
+        ZStack {
+            Theme.Colors.background.ignoresSafeArea()
 
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 0) {
-                        // 创作者头部信息
-                        creatorHeader
+            ScrollView {
+                VStack(alignment: .leading, spacing: 0) {
+                    creatorHeader
 
-                        Divider().background(Theme.Colors.divider)
-                            .padding(.vertical, Theme.Spacing.md)
+                    Divider().background(Theme.Colors.divider)
+                        .padding(.vertical, Theme.Spacing.md)
 
-                        // 专辑列表
-                        LazyVStack(spacing: Theme.Spacing.sm) {
-                            ForEach(viewModel.albums) { album in
-                                NavigationLink {
-                                    AlbumDetailView(album: album)
-                                } label: {
-                                    AlbumRowView(album: album)
-                                }
-                                .buttonStyle(.plain)
+                    LazyVStack(spacing: Theme.Spacing.sm) {
+                        ForEach(viewModel.albums) { album in
+                            NavigationLink {
+                                AlbumDetailView(album: album)
+                            } label: {
+                                AlbumRowView(album: album)
                             }
-                        }
-                        .padding(.horizontal, Theme.Spacing.md)
-                        .padding(.bottom, Theme.Spacing.xl)
-                    }
-                }
-            }
-            .navigationTitle(creator.name)
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("关闭") { dismiss() }
-                        .foregroundColor(Theme.Colors.accent)
-                }
-                // 在爱发电查看
-                ToolbarItem(placement: .topBarTrailing) {
-                    if let url = creator.afdianPageURL {
-                        NavigationLink {
-                            CreatorWebView(creator: creator, url: url)
-                        } label: {
-                            HStack(spacing: 4) {
-                                Text("爱发电主页")
-                                    .font(Theme.Typography.caption)
-                                Image(systemName: "arrow.up.right.square")
-                            }
-                            .foregroundColor(Theme.Colors.accent)
+                            .buttonStyle(.plain)
                         }
                     }
+                    .padding(.horizontal, Theme.Spacing.md)
+                    .padding(.bottom, Theme.Spacing.xl)
                 }
             }
-            .onAppear { viewModel.load() }
         }
+        .navigationTitle(creator.name)
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                if let url = creator.afdianPageURL {
+                    NavigationLink {
+                        CreatorWebView(creator: creator, url: url)
+                    } label: {
+                        HStack(spacing: 4) {
+                            Text("爱发电主页")
+                                .font(Theme.Typography.caption)
+                            Image(systemName: "arrow.up.right.square")
+                        }
+                        .foregroundColor(Theme.Colors.accent)
+                    }
+                }
+            }
+        }
+        .onAppear { viewModel.load() }
     }
 
     // MARK: - 创作者头部

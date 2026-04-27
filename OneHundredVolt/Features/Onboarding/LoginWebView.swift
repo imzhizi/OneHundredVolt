@@ -227,7 +227,10 @@ final class LoginWebViewModel {
                 return
             }
             self.pollCount += 1
-            guard self.pollCount < 20 else { return }
+            guard self.pollCount < 20 else {
+                DispatchQueue.main.async { self.showManualButton = true }
+                return
+            }
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self, weak webView] in
                 guard let self, let webView else { return }
                 self.doPoll(webView: webView)

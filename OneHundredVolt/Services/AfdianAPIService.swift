@@ -41,10 +41,15 @@ final class AfdianAPIService {
 
     private func request(path: String, params: [String: String] = [:]) async throws -> Data {
         guard let token = authToken else {
+            await MainActor.run {
+                NotificationCenter.default.post(name: .tokenExpired, object: nil)
+            }
             throw APIError.notLoggedIn
         }
 
-        var components = URLComponents(string: baseURL + path)!
+        guard var components = URLComponents(string: baseURL + path) else {
+            throw APIError.invalidURL
+        }
         if !params.isEmpty {
             components.queryItems = params.map { URLQueryItem(name: $0.key, value: $0.value) }
         }
@@ -60,7 +65,13 @@ final class AfdianAPIService {
 
         let (data, response) = try await session.data(for: req)
         guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
-            throw APIError.httpError((response as? HTTPURLResponse)?.statusCode ?? -1)
+            let code = (response as? HTTPURLResponse)?.statusCode ?? -1
+            if code == 401 {
+                await MainActor.run {
+                    NotificationCenter.default.post(name: .tokenExpired, object: nil)
+                }
+            }
+            throw APIError.httpError(code)
         }
         return data
     }
