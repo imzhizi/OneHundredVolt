@@ -132,6 +132,7 @@ struct HomeView: View {
                     .padding(.horizontal, Theme.Spacing.md)
                 }
             }
+            .padding(.top, Theme.Spacing.md)
             .padding(.bottom, Theme.Spacing.lg)
         )
     }
@@ -184,29 +185,36 @@ struct HomeView: View {
                 }
                 .padding(.vertical, Theme.Spacing.xl)
             } else {
-                VStack(spacing: 0) {
+                List {
                     ForEach(Array(player.playlist.enumerated()), id: \.element.id) { index, item in
-                        // 用独立子视图，让每行自己订阅 player，避免整个列表因 currentTime 变化全量重绘
                         PlaylistRowView(item: item, index: index, showPlayer: $showPlayer)
-
-                        if index < player.playlist.count - 1 {
-                            Divider()
-                                .background(Theme.Colors.divider)
-                                .padding(.leading, 16 + 44 + 12)
-                        }
+                            .listRowInsets(EdgeInsets(top: 0, leading: 0, bottom: 0, trailing: 0))
+                            .listRowBackground(
+                                (player.currentItem?.id == item.id
+                                    ? Theme.Colors.accent.opacity(0.06)
+                                    : Theme.Colors.cardBackground)
+                            )
+                            .listRowSeparatorTint(Theme.Colors.divider)
                     }
                     .onMove { from, to in
                         player.playlist.move(fromOffsets: from, toOffset: to)
                         player.syncAfterReorder()
                     }
                     .onDelete { indices in
+                        let cache = AudioCacheService.shared
                         let deletingCurrent = indices.contains(where: {
                             player.playlist[$0].id == player.currentItem?.id
                         })
+                        for idx in indices {
+                            cache.removeCache(for: player.playlist[idx].id)
+                        }
                         player.playlist.remove(atOffsets: indices)
                         player.didRemoveItems(deletingCurrent: deletingCurrent)
                     }
                 }
+                .listStyle(.plain)
+                .scrollDisabled(true)
+                .frame(height: CGFloat(player.playlist.count) * 64)
                 .background(Theme.Colors.cardBackground)
                 .clipShape(RoundedRectangle(cornerRadius: Theme.CornerRadius.card))
                 .padding(.horizontal, Theme.Spacing.md)
@@ -262,12 +270,9 @@ private struct PlaylistRowView: View {
     @Binding var showPlayer: Bool
 
     private let player = AudioPlayerService.shared
-    private let progressStore = PlaybackProgressStore.shared
 
     var body: some View {
         let isCurrent = player.currentItem?.id == item.id
-        let progress = progressStore.progress(for: item.id)
-        let ratio = item.duration > 0 ? min(1.0, progress / item.duration) : 0.0
 
         HStack(spacing: 12) {
             // 当前播放竖条
@@ -276,62 +281,66 @@ private struct PlaylistRowView: View {
                 .frame(width: 3)
                 .clipShape(Capsule())
 
-            // 封面
-            CachedImage(urlString: item.coverUrl) {
-                RoundedRectangle(cornerRadius: 6).fill(Theme.Colors.background)
+            // 封面 + 状态指示器叠加
+            ZStack {
+                CachedImage(urlString: item.coverUrl) {
+                    RoundedRectangle(cornerRadius: 6).fill(Theme.Colors.background)
+                }
+                .frame(width: 44, height: 44)
+                .clipShape(RoundedRectangle(cornerRadius: 6))
+
+                if isCurrent && (player.isLoading || player.isPlaying) {
+                    RoundedRectangle(cornerRadius: 6)
+                        .fill(Color.black.opacity(0.45))
+                        .frame(width: 44, height: 44)
+
+                    if player.isLoading {
+                        ProgressView()
+                            .progressViewStyle(.circular)
+                            .tint(.white)
+                            .scaleEffect(0.7)
+                    } else {
+                        Image(systemName: "waveform")
+                            .font(.system(size: 16, weight: .medium))
+                            .foregroundColor(.white)
+                            .symbolEffect(.variableColor.iterative)
+                    }
+                }
             }
-            .frame(width: 44, height: 44)
-            .clipShape(RoundedRectangle(cornerRadius: 6))
 
-            // 标题 + 进度条
-            VStack(alignment: .leading, spacing: 5) {
-                HStack(spacing: 5) {
-                    if isCurrent {
-                        if player.isLoading {
-                            ProgressView()
-                                .progressViewStyle(.circular)
-                                .scaleEffect(0.6)
-                                .tint(Theme.Colors.accent)
-                                .frame(width: 12, height: 12)
-                        } else {
-                            Image(systemName: player.isPlaying ? "waveform" : "pause.fill")
-                                .font(.system(size: 10, weight: .medium))
-                                .foregroundColor(Theme.Colors.accent)
-                                .symbolEffect(.variableColor.iterative, isActive: player.isPlaying)
-                        }
-                    }
-                    Text(item.title)
-                        .font(Theme.Typography.caption)
-                        .foregroundColor(isCurrent ? Theme.Colors.accent : Theme.Colors.textPrimary)
-                        .lineLimit(2)
-                }
+            // 标题（上行）+ 时长（下行）
+            VStack(alignment: .leading, spacing: 3) {
+                Text(item.title)
+                    .font(Theme.Typography.caption)
+                    .foregroundColor(isCurrent ? Theme.Colors.accent : Theme.Colors.textPrimary)
+                    .lineLimit(1)
 
-                if ratio > 0.01 {
-                    GeometryReader { geo in
-                        ZStack(alignment: .leading) {
-                            Capsule().fill(Theme.Colors.divider).frame(height: 2)
-                            Capsule()
-                                .fill(Theme.Colors.accent.opacity(isCurrent ? 1.0 : 0.45))
-                                .frame(width: geo.size.width * ratio, height: 2)
-                        }
-                    }
-                    .frame(height: 2)
-                }
+                Text(item.duration.minutesOnly)
+                    .font(Theme.Typography.mono)
+                    .foregroundColor(isCurrent ? Theme.Colors.accent.opacity(0.7) : Theme.Colors.textSecondary)
             }
 
             Spacer(minLength: 0)
-
-            // 时长
-            Text(item.duration.formatted)
-                .font(Theme.Typography.mono)
-                .foregroundColor(isCurrent ? Theme.Colors.accent : Theme.Colors.textSecondary)
-                .fixedSize()
         }
         .padding(.vertical, 10)
+        .padding(.leading, 0)
         .padding(.trailing, Theme.Spacing.sm)
-        .background(isCurrent ? Theme.Colors.accent.opacity(0.06) : Color.clear)
+        .background {
+            if isCurrent {
+                GeometryReader { geo in
+                    ZStack(alignment: .leading) {
+                        // 底色
+                        Theme.Colors.accent.opacity(0.06)
+                        // 进度填充
+                        Theme.Colors.accent.opacity(0.12)
+                            .frame(width: geo.size.width * player.progressRatio)
+                    }
+                }
+            }
+        }
         .contentShape(Rectangle())
         .onTapGesture {
+            guard !isCurrent else { return }
             if index != 0 {
                 player.playlist.move(fromOffsets: IndexSet(integer: index), toOffset: 0)
             }

@@ -155,10 +155,10 @@ struct AlbumDetailView: View {
                 .foregroundColor(Theme.Colors.textSecondary)
             }
 
-            // 全部播放按钮
+            // 全部播放按钮（追加到现有队列末尾，立即播放第一集）
             Button {
                 if !viewModel.displayItems.isEmpty {
-                    player.play(playlist: viewModel.displayItems, startAt: 0)
+                    player.appendAndPlay(items: viewModel.displayItems)
                     showPlayer = true
                 }
             } label: {
@@ -200,42 +200,41 @@ struct AlbumDetailView: View {
         let isItemLoading = isCurrent && player.isLoading
 
         return HStack(spacing: Theme.Spacing.sm) {
-            // 正在播放指示 / 缓冲中 / 已完成勾
+            // 封面 + 状态指示器叠加
             ZStack {
+                CachedImage(urlString: item.coverUrl) {
+                    RoundedRectangle(cornerRadius: 4)
+                        .fill(Theme.Colors.cardBackground)
+                }
+                .frame(width: 44, height: 44)
+                .clipShape(RoundedRectangle(cornerRadius: 4))
+                .opacity(dimmed ? 0.4 : 1.0)
+
+                if (isCurrent && (isItemLoading || player.isPlaying)) || dimmed {
+                    RoundedRectangle(cornerRadius: 4)
+                        .fill(Color.black.opacity(dimmed ? 0.25 : 0.45))
+                        .frame(width: 44, height: 44)
+                }
+
                 if isItemLoading {
                     ProgressView()
                         .progressViewStyle(.circular)
-                        .scaleEffect(0.65)
-                        .tint(Theme.Colors.accent)
+                        .tint(.white)
+                        .scaleEffect(0.7)
                 } else if isCurrent && player.isPlaying {
                     Image(systemName: "waveform")
-                        .font(.system(size: 14))
-                        .foregroundColor(Theme.Colors.accent)
+                        .font(.system(size: 16, weight: .medium))
+                        .foregroundColor(.white)
                         .symbolEffect(.variableColor.iterative)
-                } else if isCurrent && !player.isPlaying {
-                    // 暂停中：显示暂停图标
-                    Image(systemName: "pause.fill")
-                        .font(.system(size: 11))
-                        .foregroundColor(Theme.Colors.accent)
-                } else if isCompleted && !isCurrent {
+                } else if dimmed {
                     Image(systemName: "checkmark")
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundColor(Theme.Colors.textSecondary.opacity(0.5))
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundColor(.white.opacity(0.8))
                 }
             }
-            .frame(width: 20, alignment: .center)
 
-            // 封面（小）
-            CachedImage(urlString: item.coverUrl) {
-                RoundedRectangle(cornerRadius: 4)
-                    .fill(Theme.Colors.cardBackground)
-            }
-            .frame(width: 44, height: 44)
-            .clipShape(RoundedRectangle(cornerRadius: 4))
-            .opacity(dimmed ? 0.4 : 1.0)
-
-            // 标题 + 进度
-            VStack(alignment: .leading, spacing: 4) {
+            // 标题（上行）+ 时长（下行）
+            VStack(alignment: .leading, spacing: 3) {
                 Text(item.title)
                     .font(Theme.Typography.subheadline)
                     .foregroundColor(
@@ -243,29 +242,14 @@ struct AlbumDetailView: View {
                         : dimmed  ? Theme.Colors.textSecondary
                         : Theme.Colors.textPrimary
                     )
-                    .lineLimit(2)
+                    .lineLimit(1)
 
-                // 进度条（听过但未完成才显示）
-                let ratio = viewModel.progressRatio(for: item)
-                if ratio > 0 {
-                    GeometryReader { geo in
-                        ZStack(alignment: .leading) {
-                            Capsule().fill(Theme.Colors.divider).frame(height: 2)
-                            Capsule().fill(Theme.Colors.accent.opacity(0.6))
-                                .frame(width: geo.size.width * ratio, height: 2)
-                        }
-                    }
-                    .frame(height: 2)
-                }
+                Text(item.duration.minutesOnly)
+                    .font(Theme.Typography.caption)
+                    .foregroundColor(dimmed ? Theme.Colors.textSecondary.opacity(0.4) : Theme.Colors.textSecondary)
             }
 
             Spacer()
-
-            // 时长
-            Text(item.duration.formatted)
-                .font(Theme.Typography.mono)
-                .foregroundColor(dimmed ? Theme.Colors.textSecondary.opacity(0.4) : Theme.Colors.textSecondary)
-                .fixedSize()
 
             // 追加到播放列表末尾
             Button {
@@ -281,7 +265,7 @@ struct AlbumDetailView: View {
             }
             .buttonStyle(.plain)
 
-            // 立即播放（插入当前曲目后并立刻播放）
+            // 立即播放
             Button {
                 player.playImmediately(item)
                 showPlayer = true
@@ -301,7 +285,7 @@ struct AlbumDetailView: View {
             .buttonStyle(.plain)
         }
         .padding(.horizontal, Theme.Spacing.sm)
-        .padding(.vertical, 12)
+        .padding(.vertical, 10)
         .contentShape(Rectangle())
     }
 }

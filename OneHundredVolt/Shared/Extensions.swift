@@ -13,6 +13,12 @@ extension TimeInterval {
             : String(format: "%d:%02d", m, s)
     }
 
+    /// 仅显示总分钟数（列表用），不换算小时，不显示秒：3661s → "61 分钟"
+    var minutesOnly: String {
+        let mins = max(1, Int(self) / 60)
+        return "\(mins) 分钟"
+    }
+
     /// "约 X 小时" / "X 分钟"
     var humanReadable: String {
         let mins = Int(self) / 60

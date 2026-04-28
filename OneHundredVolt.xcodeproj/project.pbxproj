@@ -6,8 +6,19 @@
 	objectVersion = 77;
 	objects = {
 
+/* Begin PBXContainerItemProxy section */
+		AA000001000000000000002D /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 537297E82F9F3E6600614B88 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 537297EF2F9F3E6600614B88;
+			remoteInfo = OneHundredVolt;
+		};
+/* End PBXContainerItemProxy section */
+
 /* Begin PBXFileReference section */
 		537297F02F9F3E6600614B88 /* OneHundredVolt.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = OneHundredVolt.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		AA000001000000000000001B /* OneHundredVoltTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = OneHundredVoltTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
@@ -29,10 +40,22 @@
 			path = OneHundredVolt;
 			sourceTree = "<group>";
 		};
+		AA000001000000000000002E /* OneHundredVoltTests */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			path = OneHundredVoltTests;
+			sourceTree = "<group>";
+		};
 /* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXFrameworksBuildPhase section */
 		537297ED2F9F3E6600614B88 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		AA000001000000000000001D /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -46,6 +69,7 @@
 			isa = PBXGroup;
 			children = (
 				537297F22F9F3E6600614B88 /* OneHundredVolt */,
+				AA000001000000000000002E /* OneHundredVoltTests */,
 				537297F12F9F3E6600614B88 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -54,6 +78,7 @@
 			isa = PBXGroup;
 			children = (
 				537297F02F9F3E6600614B88 /* OneHundredVolt.app */,
+				AA000001000000000000001B /* OneHundredVoltTests.xctest */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -82,6 +107,29 @@
 			productName = OneHundredVolt;
 			productReference = 537297F02F9F3E6600614B88 /* OneHundredVolt.app */;
 			productType = "com.apple.product-type.application";
+		};
+		AA000001000000000000001A /* OneHundredVoltTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = AA000001000000000000001F /* Build configuration list for PBXNativeTarget "OneHundredVoltTests" */;
+			buildPhases = (
+				AA000001000000000000001C /* Sources */,
+				AA000001000000000000001D /* Frameworks */,
+				AA000001000000000000001E /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				AA000001000000000000002C /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				AA000001000000000000002E /* OneHundredVoltTests */,
+			);
+			name = OneHundredVoltTests;
+			packageProductDependencies = (
+			);
+			productName = OneHundredVoltTests;
+			productReference = AA000001000000000000001B /* OneHundredVoltTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
 		};
 /* End PBXNativeTarget section */
 
@@ -114,12 +162,20 @@
 			projectRoot = "";
 			targets = (
 				537297EF2F9F3E6600614B88 /* OneHundredVolt */,
+				AA000001000000000000001A /* OneHundredVoltTests */,
 			);
 		};
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
 		537297EE2F9F3E6600614B88 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		AA000001000000000000001E /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -136,7 +192,22 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		AA000001000000000000001C /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		AA000001000000000000002C /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 537297EF2F9F3E6600614B88 /* OneHundredVolt */;
+			targetProxy = AA000001000000000000002D /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
 		537297F92F9F3E6800614B88 /* Debug */ = {
@@ -330,6 +401,48 @@
 			};
 			name = Release;
 		};
+		AA000001000000000000002A /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 8NKC7V5F8C;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.4;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.imzhizi.OneHundredVoltTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/OneHundredVolt.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/OneHundredVolt";
+			};
+			name = Debug;
+		};
+		AA000001000000000000002B /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 8NKC7V5F8C;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.4;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.imzhizi.OneHundredVoltTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/OneHundredVolt.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/OneHundredVolt";
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -347,6 +460,15 @@
 			buildConfigurations = (
 				537297FC2F9F3E6800614B88 /* Debug */,
 				537297FD2F9F3E6800614B88 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		AA000001000000000000001F /* Build configuration list for PBXNativeTarget "OneHundredVoltTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				AA000001000000000000002A /* Debug */,
+				AA000001000000000000002B /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;

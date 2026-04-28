@@ -343,7 +343,9 @@ struct PlayerView: View {
                 }
             } label: {
                 Image(systemName: "list.bullet")
+                    .font(.system(size: 22))
                     .foregroundColor(Theme.Colors.textSecondary)
+                    .frame(width: 44, height: 44)
             }
         }
     }

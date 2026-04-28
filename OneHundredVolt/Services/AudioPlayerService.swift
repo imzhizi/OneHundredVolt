@@ -1,6 +1,6 @@
 import Foundation
 import AVFoundation
-    
+
 /// 全局音频播放器（单例）
 ///
 /// ## 播放列表语义
@@ -8,28 +8,47 @@ import AVFoundation
 /// - 播放完成后，当前单集自动从列表移除，自动播放新的 `playlist[0]`
 /// - 手动跳下一首：移除 `playlist[0]`，播放新的 `playlist[0]`
 /// - 手动跳上一首：若进度 > 5s 则重播当前，否则无操作（已移除的不可恢复）
-/// - `currentIndex` 已废弃，统一用 `playlist[0]` 表示当前
 @Observable
 final class AudioPlayerService {
 
     static let shared = AudioPlayerService()
-    private init() {
+
+    // MARK: - 依赖（可注入，便于单测）
+
+    private let playerFactory: AudioPlayerFactory
+    private let api: AudioAPIService
+    private let progressStore: PlaybackProgressStoring
+    private let audioCache: AudioCaching
+    private let defaults: UserDefaults
+
+    init(
+        playerFactory: AudioPlayerFactory = LiveAudioPlayerFactory(),
+        api: AudioAPIService = AfdianAPIService.shared,
+        progressStore: PlaybackProgressStoring = PlaybackProgressStore.shared,
+        audioCache: AudioCaching = AudioCacheService.shared,
+        defaults: UserDefaults = .standard
+    ) {
+        self.playerFactory = playerFactory
+        self.api = api
+        self.progressStore = progressStore
+        self.audioCache = audioCache
+        self.defaults = defaults
         setupAudioSession()
     }
 
     // MARK: - AVPlayer 内部状态（不暴露给 UI）
 
-    private var player: AVPlayer?
+    private var player: AVPlayerProtocol?
     private var playerItem: AVPlayerItem?
     private var timeObserver: Any?
     private var statusObserver: NSKeyValueObservation?
 
     // MARK: - 播放状态（UI 观察这些属性）
 
-    private(set) var currentItem: AudioItem?    // 当前播放的单集，nil 时 MiniPlayer 消失
+    private(set) var currentItem: AudioItem?
     var playlist: [AudioItem] = [] {
         didSet { persistPlaylist() }
-    }                                           // playlist[0] == currentItem（保持一致）
+    }
 
     private(set) var isPlaying: Bool = false
     private(set) var isLoading: Bool = false
@@ -42,7 +61,7 @@ final class AudioPlayerService {
     var playbackRate: Float = 1.0 {
         didSet {
             if isPlaying { player?.rate = playbackRate }
-            UserDefaults.standard.set(playbackRate, forKey: "playback_rate")
+            defaults.set(playbackRate, forKey: "playback_rate")
         }
     }
 
@@ -64,25 +83,27 @@ final class AudioPlayerService {
         }
     }
 
-    private let progressStore = PlaybackProgressStore.shared
-    private let api = AfdianAPIService.shared
+    // MARK: - 持久化
 
     private static let playlistKey = "saved_playlist_v1"
 
     private func persistPlaylist() {
         if playlist.isEmpty {
-            UserDefaults.standard.removeObject(forKey: Self.playlistKey)
+            defaults.removeObject(forKey: Self.playlistKey)
         } else if let data = try? JSONEncoder().encode(playlist) {
-            UserDefaults.standard.set(data, forKey: Self.playlistKey)
+            defaults.set(data, forKey: Self.playlistKey)
         }
     }
 
     private func restorePlaylist() {
-        guard let data = UserDefaults.standard.data(forKey: Self.playlistKey),
+        guard let data = defaults.data(forKey: Self.playlistKey),
               let items = try? JSONDecoder().decode([AudioItem].self, from: data),
               !items.isEmpty else { return }
         playlist = items
         currentItem = items[0]
+        duration = items[0].duration
+        let saved = progressStore.progress(for: items[0].id)
+        if saved > 0 { currentTime = saved }
     }
 
     // MARK: - 便利计算属性
@@ -104,17 +125,15 @@ final class AudioPlayerService {
         } catch {
             print("[AudioPlayer] Session setup failed: \(error)")
         }
-        let savedRate = UserDefaults.standard.float(forKey: "playback_rate")
+        let savedRate = defaults.float(forKey: "playback_rate")
         playbackRate = savedRate > 0 ? savedRate : 1.0
         restorePlaylist()
     }
 
     // MARK: - 播放控制（对外 API）
 
-    /// 设置新播放列表并从第 0 位开始播放
     func play(playlist: [AudioItem], startAt index: Int = 0) {
         guard index < playlist.count else { return }
-        // 将 startAt 位置的单集移到最前，保证 playlist[0] == 当前播放
         var reordered = playlist
         if index != 0 {
             let item = reordered.remove(at: index)
@@ -124,27 +143,30 @@ final class AudioPlayerService {
         loadAndPlay(item: reordered[0])
     }
 
-    /// 播放单个音频：若已在列表中则移到队首，否则插入队首
     func play(item: AudioItem) {
         playlist.removeAll { $0.id == item.id }
         playlist.insert(item, at: 0)
         loadAndPlay(item: item)
     }
 
-    /// 立即播放：将单集移到队首并立刻播放（点击 ▶ 按钮）
     func playImmediately(_ item: AudioItem) {
         playlist.removeAll { $0.id == item.id }
         playlist.insert(item, at: 0)
         loadAndPlay(item: item)
     }
 
-    /// 追加到播放列表末尾（点击 + 按钮，不改变当前播放）
     func appendToPlaylist(_ item: AudioItem) {
         guard !playlist.contains(where: { $0.id == item.id }) else { return }
         playlist.append(item)
     }
 
-    /// 跳到下一首（标记当前为已完成并移除，播放列表中新的第一项）
+    func appendAndPlay(items: [AudioItem]) {
+        guard !items.isEmpty else { return }
+        let newItems = items.filter { item in !playlist.contains(where: { $0.id == item.id }) }
+        playlist.append(contentsOf: newItems)
+        playImmediately(items[0])
+    }
+
     func playNext() {
         guard hasNext else { return }
         if let id = currentItem?.id {
@@ -154,37 +176,29 @@ final class AudioPlayerService {
         loadAndPlay(item: playlist[0])
     }
 
-    /// 上一首：若进度 > 5s 则重播当前；否则无操作
     func playPrevious() {
-        if currentTime > 5 {
-            seek(to: 0)
-        }
-        // 已移除的单集无法恢复，不做跳转
+        if currentTime > 5 { seek(to: 0) }
     }
 
-    /// 清空播放列表并停止播放（MiniPlayer 自动消失）
     func clearAll() {
         saveCurrentProgress()
         stopCurrentPlayer()
         currentItem = nil
         playlist = []
         isPlaying = false
+        isLoading = false
         currentTime = 0
         duration = 0
         loadError = nil
         NowPlayingService.shared.updateNowPlaying(item: nil)
     }
 
-    /// 从播放列表删除某一项后调用（HomeView onDelete）
-    /// - 若删的是当前播放项且列表还有内容，自动播新的 playlist[0]
-    /// - 若列表已空，调用 clearAll()
     func didRemoveItems(deletingCurrent: Bool) {
         if playlist.isEmpty {
             clearAll()
         } else if deletingCurrent {
             loadAndPlay(item: playlist[0])
         }
-        // 删的不是当前播放项：不需要任何操作
     }
 
     func pause() {
@@ -194,13 +208,19 @@ final class AudioPlayerService {
     }
 
     func resume() {
-        guard player != nil else { return }  // 加载中时 player 为 nil，不强制设 isPlaying
+        guard player != nil else { return }
         player?.rate = playbackRate
         isPlaying = true
     }
 
     func togglePlayPause() {
-        isPlaying ? pause() : resume()
+        if isPlaying {
+            pause()
+        } else if player == nil, let item = currentItem {
+            loadAndPlay(item: item)
+        } else {
+            resume()
+        }
     }
 
     func seek(to time: TimeInterval) {
@@ -217,12 +237,8 @@ final class AudioPlayerService {
         seek(to: max(currentTime - seconds, 0))
     }
 
-    // MARK: - 拖拽排序回调（playlist[0] 不变，只是重排后面的）
-
-    /// 拖拽排序后确保 currentItem 和 playlist[0] 保持一致
     func syncAfterReorder() {
         guard let current = currentItem else { return }
-        // 把当前正在播的移回 index 0（不依赖 SwiftUI.move，使用纯 Swift 数组操作）
         if let idx = playlist.firstIndex(where: { $0.id == current.id }), idx != 0 {
             let item = playlist.remove(at: idx)
             playlist.insert(item, at: 0)
@@ -265,16 +281,22 @@ final class AudioPlayerService {
         isLoading = true
         isPlaying = false
         loadError = nil
-        currentTime = 0
         duration = item.duration
+        // currentTime 保留旧值，readyToPlay 后 seek 完成再更新，避免进度条闪烁
 
         progressStore.setLastPlayed(postId: item.id, creatorId: item.creatorId)
 
         Task {
             do {
+                if let localURL = audioCache.cachedURL(for: item.id) {
+                    await MainActor.run { self.setupPlayer(url: localURL, item: item) }
+                    return
+                }
                 let urlString = try await api.fetchAudioURL(postId: item.id)
                 guard let url = URL(string: urlString) else { throw APIError.noAudioURL }
                 await MainActor.run { self.setupPlayer(url: url, item: item) }
+                // 后台缓存，不阻塞播放 Task
+                Task { await self.audioCache.cacheAudio(from: url, postId: item.id) }
             } catch {
                 await MainActor.run {
                     self.isLoading = false
@@ -286,25 +308,40 @@ final class AudioPlayerService {
 
     @MainActor
     private func setupPlayer(url: URL, item: AudioItem) {
-        let avItem = AVPlayerItem(url: url)
+        let avItem = playerFactory.makePlayerItem(url: url)
         playerItem = avItem
-        player = AVPlayer(playerItem: avItem)
-        player?.automaticallyWaitsToMinimizeStalling = true
+        player = playerFactory.makePlayer(playerItem: avItem)
+        (player as? AVPlayer)?.automaticallyWaitsToMinimizeStalling = true
 
         statusObserver = avItem.observe(\.status, options: [.new]) { [weak self] avPlayerItem, _ in
-            DispatchQueue.main.async {
-                guard let self else { return }
-                // 守卫：切歌后旧回调到来，忽略以避免状态覆盖
-                guard self.currentItem?.id == item.id else { return }
+            // 用 Task { @MainActor in } 而非 DispatchQueue.main.async，
+            // 避免与 Swift Concurrency 的 actor 模型混用导致 race condition
+            Task { @MainActor [weak self] in
+                guard let self, self.currentItem?.id == item.id else { return }
                 switch avPlayerItem.status {
                 case .readyToPlay:
                     self.isLoading = false
                     let d = avPlayerItem.duration.seconds
                     self.duration = d.isNaN || d <= 0 ? item.duration : d
                     let saved = self.progressStore.progress(for: item.id)
-                    if saved > 5 { self.seek(to: saved) }
-                    self.player?.rate = self.playbackRate
-                    self.isPlaying = true
+                    if saved > 5 {
+                        let target = CMTime(seconds: saved, preferredTimescale: 600)
+                        // 捕获当前 player 实例，seek completion 里用捕获值而非 self.player，
+                        // 避免切歌后旧 completion 意外启动新歌播放
+                        let capturedPlayer = self.player
+                        capturedPlayer?.seek(to: target, toleranceBefore: .zero, toleranceAfter: .zero) { [weak self] finished in
+                            Task { @MainActor [weak self] in
+                                guard let self, self.currentItem?.id == item.id else { return }
+                                if finished { self.currentTime = saved }
+                                capturedPlayer?.rate = self.playbackRate
+                                self.isPlaying = true
+                            }
+                        }
+                    } else {
+                        self.currentTime = 0
+                        self.player?.rate = self.playbackRate
+                        self.isPlaying = true
+                    }
                     NowPlayingService.shared.updateNowPlaying(item: item)
                 case .failed:
                     self.isLoading = false
@@ -333,24 +370,21 @@ final class AudioPlayerService {
     }
 
     @objc private func playerDidFinishPlaying() {
-        DispatchQueue.main.async { [weak self] in
+        Task { @MainActor [weak self] in
             self?.handlePlaybackFinished()
         }
     }
 
     @MainActor
     private func handlePlaybackFinished() {
-        // 播完：标记为已完成（同时清除进度记录），从列表移除
         if let id = currentItem?.id {
             progressStore.markCompleted(for: id)
             playlist.removeAll { $0.id == id }
+            audioCache.removeCache(for: id)
         }
-
         if !playlist.isEmpty {
-            // 还有待播内容，播 playlist[0]
             loadAndPlay(item: playlist[0])
         } else {
-            // 全部播完：清理并通知 UI
             stopCurrentPlayer()
             isPlaying = false
             currentItem = nil

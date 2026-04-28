@@ -106,8 +106,9 @@ final class SyncService {
                 // 每次请求间隔 0.3s
                 let accessibleAlbums = albums.filter { $0.isAccessible }
                 for (j, album) in accessibleAlbums.enumerated() {
-                    let albumProgress = baseProgress + 0.85 / Double(total) * 0.3
-                        + Double(j) / Double(max(accessibleAlbums.count, 1)) * (0.85 / Double(total) * 0.7)
+                    let perCreator = 0.85 / Double(total)
+                    let albumFraction = Double(j) / Double(max(accessibleAlbums.count, 1))
+                    let albumProgress = baseProgress + perCreator * 0.3 + albumFraction * (perCreator * 0.7)
                     await setProgress("同步 \(creator.name) — \(album.title)...", albumProgress)
 
                     if j > 0 { try await Task.sleep(nanoseconds: 300_000_000) } // 0.3s
