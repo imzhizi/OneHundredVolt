@@ -9,7 +9,7 @@ import AVFoundation
 /// - 手动跳下一首：移除 `playlist[0]`，播放新的 `playlist[0]`
 /// - 手动跳上一首：若进度 > 5s 则重播当前，否则无操作（已移除的不可恢复）
 @Observable
-final class AudioPlayerService {
+final class AudioPlayerService: @unchecked Sendable {
 
     static let shared = AudioPlayerService()
 
@@ -100,10 +100,15 @@ final class AudioPlayerService {
               let items = try? JSONDecoder().decode([AudioItem].self, from: data),
               !items.isEmpty else { return }
         playlist = items
-        currentItem = items[0]
-        duration = items[0].duration
-        let saved = progressStore.progress(for: items[0].id)
-        if saved > 0 { currentTime = saved }
+        // 有本地缓存时直接恢复 AVPlayer 并自动续播，否则只恢复状态等用户点击
+        if audioCache.cachedURL(for: items[0].id) != nil {
+            loadAndPlay(item: items[0])
+        } else {
+            currentItem = items[0]
+            duration = items[0].duration
+            let saved = progressStore.progress(for: items[0].id)
+            if saved > 0 { currentTime = saved }
+        }
     }
 
     // MARK: - 便利计算属性
@@ -214,6 +219,7 @@ final class AudioPlayerService {
     }
 
     func togglePlayPause() {
+        if isLoading { return }
         if isPlaying {
             pause()
         } else if player == nil, let item = currentItem {

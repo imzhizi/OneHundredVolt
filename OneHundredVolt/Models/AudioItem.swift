@@ -17,6 +17,11 @@ struct AudioItem: Identifiable, Codable, Equatable, Hashable {
     // MARK: - 运行时（不持久化）
     /// 音频直链 URL（带签名，有时效性，每次播放前重新获取）
     var audioUrl: String?
+
+    enum CodingKeys: String, CodingKey {
+        case id, albumId, creatorId, title, coverUrl, duration, sortOrder, publishTime
+        // audioUrl 故意排除，不持久化
+    }
 }
 
 extension AudioItem {

@@ -19,14 +19,27 @@ final class AudioCacheService {
     // MARK: - Public API
 
     func cachedURL(for postId: String) -> URL? {
-        let url = cacheDir.appendingPathComponent(postId)
-        guard FileManager.default.fileExists(atPath: url.path) else { return nil }
-        touch(url)
-        return url
+        let fm = FileManager.default
+        guard let files = try? fm.contentsOfDirectory(atPath: cacheDir.path) else { return nil }
+
+        if let match = files.first(where: { $0.hasPrefix(postId + ".") }) {
+            // 带扩展名的新格式缓存
+            let url = cacheDir.appendingPathComponent(match)
+            touch(url)
+            return url
+        }
+
+        // 旧格式（无扩展名）：AVPlayer 无法识别，直接删除让其重新缓存
+        if files.contains(postId) {
+            try? fm.removeItem(at: cacheDir.appendingPathComponent(postId))
+        }
+        return nil
     }
 
     func cacheAudio(from remoteURL: URL, postId: String) async {
-        let dest = cacheDir.appendingPathComponent(postId)
+        let ext = remoteURL.pathExtension  // 如 "mp3"、"m4a"，query string 不影响
+        let filename = ext.isEmpty ? postId : "\(postId).\(ext)"
+        let dest = cacheDir.appendingPathComponent(filename)
         guard !FileManager.default.fileExists(atPath: dest.path) else { return }
         do {
             let (tempURL, _) = try await session.download(from: remoteURL)

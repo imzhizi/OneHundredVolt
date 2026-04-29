@@ -16,7 +16,7 @@ struct AllCreatorsView: View {
                         } label: {
                             creatorRow(creator)
                         }
-                        .buttonStyle(.plain)
+                        .buttonStyle(ScaleButtonStyle(scale: 0.97))
                     }
                 }
                 .padding(.horizontal, Theme.Spacing.md)

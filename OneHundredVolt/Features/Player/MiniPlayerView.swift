@@ -92,6 +92,6 @@ struct MiniPlayerView: View {
             .padding(.vertical, Theme.Spacing.sm)
             .background(Theme.Colors.secondaryBackground)
         }
-        .buttonStyle(.plain)
+        .buttonStyle(ScaleButtonStyle(scale: 0.98))
     }
 }

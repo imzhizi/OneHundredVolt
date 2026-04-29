@@ -6,6 +6,7 @@ struct HomeView: View {
     @State private var showPlayer = false
     @State private var scrollToPlaylist = false
     @State private var navigationPath = NavigationPath()
+    @State private var scrollViewID = UUID()
 
     private let player = AudioPlayerService.shared
 
@@ -19,6 +20,7 @@ struct HomeView: View {
                 ScrollViewReader { proxy in
                     ScrollView {
                         LazyVStack(alignment: .leading, spacing: 0) {
+                            Color.clear.frame(height: 0).id("top")
 
                             // MARK: 空状态
                             if viewModel.creators.isEmpty {
@@ -42,10 +44,15 @@ struct HomeView: View {
                             Spacer().frame(height: player.currentItem != nil ? 80 : 0)
                         }
                     }
+                    .id(scrollViewID)
                     .onChange(of: scrollToPlaylist) { _, val in
                         guard val else { return }
                         withAnimation { proxy.scrollTo("playlist", anchor: .top) }
                         scrollToPlaylist = false
+                    }
+                    .onAppear {
+                        scrollViewID = UUID()
+                        viewModel.loadIfNeeded()
                     }
                 }
 
@@ -68,7 +75,6 @@ struct HomeView: View {
                     }
                 }
             }
-            .onAppear { viewModel.loadIfNeeded() }
             .onReceive(NotificationCenter.default.publisher(for: .didClearData)) { _ in
                 viewModel.load()
             }
@@ -126,7 +132,7 @@ struct HomeView: View {
                             } label: {
                                 AlbumCardView(album: album)
                             }
-                            .buttonStyle(.plain)
+                            .buttonStyle(ScaleButtonStyle(scale: 0.95))
                         }
                     }
                     .padding(.horizontal, Theme.Spacing.md)
@@ -273,6 +279,7 @@ private struct PlaylistRowView: View {
 
     var body: some View {
         let isCurrent = player.currentItem?.id == item.id
+        let isActivelyPlaying = isCurrent && (player.isPlaying || player.isLoading)
 
         HStack(spacing: 12) {
             // 当前播放竖条
@@ -340,7 +347,7 @@ private struct PlaylistRowView: View {
         }
         .contentShape(Rectangle())
         .onTapGesture {
-            guard !isCurrent else { return }
+            guard !isActivelyPlaying else { return }
             if index != 0 {
                 player.playlist.move(fromOffsets: IndexSet(integer: index), toOffset: 0)
             }

@@ -116,6 +116,17 @@ extension View {
     }
 }
 
+// MARK: - ScaleButtonStyle
+
+struct ScaleButtonStyle: ButtonStyle {
+    var scale: CGFloat = 0.93
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .scaleEffect(configuration.isPressed ? scale : 1.0)
+            .animation(.easeInOut(duration: 0.12), value: configuration.isPressed)
+    }
+}
+
 // MARK: - String
 
 extension String {

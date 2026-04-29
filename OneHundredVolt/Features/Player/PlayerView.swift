@@ -250,16 +250,18 @@ struct PlayerView: View {
                 Image(systemName: "backward.fill")
                     .font(.system(size: 28))
                     .foregroundColor(Theme.Colors.textPrimary)
+                    .frame(maxWidth: .infinity)
             }
-            .frame(maxWidth: .infinity)
+            .buttonStyle(ScaleButtonStyle())
 
             // 快退 15s
             Button { player.skipBackward() } label: {
                 Image(systemName: "gobackward.15")
                     .font(.system(size: 24))
                     .foregroundColor(Theme.Colors.textPrimary)
+                    .frame(maxWidth: .infinity)
             }
-            .frame(maxWidth: .infinity)
+            .buttonStyle(ScaleButtonStyle())
 
             // 播放 / 暂停（大按钮）
             Button { player.togglePlayPause() } label: {
@@ -276,24 +278,27 @@ struct PlayerView: View {
                             .offset(x: player.isPlaying ? 0 : 2)
                     }
                 }
+                .frame(maxWidth: .infinity)
             }
-            .frame(maxWidth: .infinity)
+            .buttonStyle(ScaleButtonStyle(scale: 0.95))
 
             // 快进 30s
             Button { player.skipForward() } label: {
                 Image(systemName: "goforward.30")
                     .font(.system(size: 24))
                     .foregroundColor(Theme.Colors.textPrimary)
+                    .frame(maxWidth: .infinity)
             }
-            .frame(maxWidth: .infinity)
+            .buttonStyle(ScaleButtonStyle())
 
             // 下一首
             Button { player.playNext() } label: {
                 Image(systemName: "forward.fill")
                     .font(.system(size: 28))
                     .foregroundColor(Theme.Colors.textPrimary)
+                    .frame(maxWidth: .infinity)
             }
-            .frame(maxWidth: .infinity)
+            .buttonStyle(ScaleButtonStyle())
         }
     }
 
@@ -313,6 +318,7 @@ struct PlayerView: View {
                             .stroke(Theme.Colors.accent.opacity(0.5), lineWidth: 1)
                     )
             }
+            .buttonStyle(ScaleButtonStyle())
 
             Spacer()
 
@@ -332,6 +338,7 @@ struct PlayerView: View {
                     player.sleepRemainingSeconds > 0 ? Theme.Colors.secondaryAccent : Theme.Colors.textSecondary
                 )
             }
+            .buttonStyle(ScaleButtonStyle())
 
             Spacer()
 
@@ -347,6 +354,7 @@ struct PlayerView: View {
                     .foregroundColor(Theme.Colors.textSecondary)
                     .frame(width: 44, height: 44)
             }
+            .buttonStyle(ScaleButtonStyle())
         }
     }
 

@@ -44,6 +44,40 @@ struct RestorePlaylistTests {
         #expect(deps.service.currentTime == 55)
         #expect(deps.service.duration == 100)
     }
+
+    @Test("有本地缓存时 restorePlaylist 触发 loadAndPlay（isLoading = true）")
+    @MainActor func triggersLoadWhenCacheExists() async {
+        let item = makeItem(id: "cached-restore", duration: 200)
+        let deps = TestDeps(savedProgress: ["cached-restore": 30], playlistItems: [item])
+        deps.cache.cachedURLMap["cached-restore"] = URL(string: "file:///tmp/cached-restore.mp3")!
+
+        // 重新初始化 service，让 restorePlaylist 看到缓存
+        let svc = AudioPlayerService(
+            playerFactory: deps.factory,
+            api: deps.api,
+            progressStore: deps.store,
+            audioCache: deps.cache,
+            defaults: deps.defaults
+        )
+
+        await Task.yield()
+        await Task.yield()
+
+        #expect(svc.currentItem?.id == "cached-restore")
+        #expect(svc.isLoading == true)   // loadAndPlay 被触发
+        #expect(deps.api.fetchCallCount == 0)  // 有缓存，不调 API
+    }
+
+    @Test("无本地缓存时 restorePlaylist 只恢复状态，不触发 loadAndPlay")
+    @MainActor func onlyRestoresStateWhenNoCache() {
+        let item = makeItem(id: "no-cache", duration: 150)
+        let deps = TestDeps(savedProgress: ["no-cache": 20], playlistItems: [item])
+        // cache 里没有该 item
+
+        #expect(deps.service.currentItem?.id == "no-cache")
+        #expect(deps.service.isLoading == false)  // 没有触发 loadAndPlay
+        #expect(deps.service.currentTime == 20)
+    }
 }
 
 // MARK: - togglePlayPause
@@ -65,6 +99,25 @@ struct TogglePlayPauseTests {
         await Task.yield()
         await Task.yield()
         #expect(deps.api.fetchCallCount >= 1)
+    }
+
+    @Test("isLoading 时点击无效，不重复触发 loadAndPlay")
+    @MainActor func noOpWhenLoading() async {
+        let deps = TestDeps()
+        deps.service.play(item: makeItem(id: "loading-item"))
+        #expect(deps.service.isLoading == true)
+
+        // 等 Task 跑完第一次 fetch
+        await Task.yield()
+        await Task.yield()
+        let callCountAfterFirstPlay = deps.api.fetchCallCount
+
+        // isLoading 仍为 true（Mock AVPlayerItem 不触发 readyToPlay，所以 isLoading 不会变 false）
+        deps.service.togglePlayPause()  // isLoading 时应无操作
+
+        await Task.yield()
+        await Task.yield()
+        #expect(deps.api.fetchCallCount == callCountAfterFirstPlay)  // 没有新增 API 调用
     }
 
     @Test("正在播放时调用 pause")

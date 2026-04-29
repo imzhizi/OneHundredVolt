@@ -63,6 +63,16 @@ struct AlbumDetailView: View {
         }
         .navigationTitle(album.title)
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Button {
+                    postDetailURL = URL(string: "https://afdian.com/album/\(album.id)")
+                } label: {
+                    Image(systemName: "safari")
+                        .foregroundColor(Theme.Colors.accent)
+                }
+            }
+        }
         .onAppear { viewModel.load() }
         .onReceive(NotificationCenter.default.publisher(for: .navigateToHomePlaylist)) { _ in
             // 先关闭全屏播放器（如有），再 pop 回首页
@@ -184,6 +194,7 @@ struct AlbumDetailView: View {
             }
             .padding(.horizontal, Theme.Spacing.md)
             .disabled(viewModel.isLoading)
+            .buttonStyle(ScaleButtonStyle(scale: 0.97))
         }
         .padding(Theme.Spacing.lg)
     }
@@ -263,7 +274,7 @@ struct AlbumDetailView: View {
                         ? Theme.Colors.accent : Theme.Colors.textSecondary.opacity(dimmed ? 0.4 : 1.0)
                     )
             }
-            .buttonStyle(.plain)
+            .buttonStyle(ScaleButtonStyle())
 
             // 立即播放
             Button {
@@ -282,7 +293,7 @@ struct AlbumDetailView: View {
                         .foregroundColor(Theme.Colors.accent.opacity(dimmed ? 0.4 : 1.0))
                 }
             }
-            .buttonStyle(.plain)
+            .buttonStyle(ScaleButtonStyle())
         }
         .padding(.horizontal, Theme.Spacing.sm)
         .padding(.vertical, 10)

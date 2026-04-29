@@ -25,7 +25,7 @@ final class MockAVPlayer: AVPlayerProtocol {
         to time: CMTime,
         toleranceBefore: CMTime,
         toleranceAfter: CMTime,
-        completionHandler: @escaping (Bool) -> Void
+        completionHandler: @escaping @Sendable (Bool) -> Void
     ) {
         seekCallCount += 1
         lastSeekTime = time
@@ -35,7 +35,7 @@ final class MockAVPlayer: AVPlayerProtocol {
     func addPeriodicTimeObserver(
         forInterval interval: CMTime,
         queue: DispatchQueue?,
-        using block: @escaping (CMTime) -> Void
+        using block: @escaping @Sendable (CMTime) -> Void
     ) -> Any {
         timeObserverBlock = block
         return NSObject() // opaque token
@@ -62,5 +62,6 @@ struct MockAudioPlayerFactory: AudioPlayerFactory {
     let player = MockAVPlayer()
 
     func makePlayerItem(url: URL) -> AVPlayerItem { item }
+    func makePlayerItem(asset: AVURLAsset) -> AVPlayerItem { item }
     func makePlayer(playerItem: AVPlayerItem) -> AVPlayerProtocol { player }
 }
