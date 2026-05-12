@@ -4,6 +4,8 @@ DerivedData/
 *.xcodeproj/project.xcworkspace/
 *.xcodeproj/xcuserdata/
 *.xcworkspace/xcuserdata/
+*.xcuserstate
+.build/
 
 # Swift Package Manager
 .swiftpm/
@@ -21,3 +23,8 @@ Package.resolved
 # Projects
 docs/
 .playwright-mcp/
+
+# Gradle / Android
+.gradle/
+local.properties
+*.apk

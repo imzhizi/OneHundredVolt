@@ -1,6 +1,8 @@
 # 一百伏特 — 播客播放器
 
 > 爱发电音频播放增强项目
+>
+> 专项设计：`docs/PLAYLIST_LOUDNESS_PLAN.md`
 
 ## 核心概念
 
