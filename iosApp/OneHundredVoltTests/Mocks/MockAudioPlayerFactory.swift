@@ -58,7 +58,7 @@ final class MockAVPlayer: AVPlayerProtocol {
 }
 
 struct MockAudioPlayerFactory: AudioPlayerFactory {
-    let item = AVPlayerItem(url: URL(string: "data:audio/mp3,")!)
+    let item = AVPlayerItem(url: URL(string: "file:///tmp/mock-audio.mp3")!)
     let player = MockAVPlayer()
 
     func makePlayerItem(url: URL) -> AVPlayerItem { item }

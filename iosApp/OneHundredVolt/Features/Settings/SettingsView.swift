@@ -4,14 +4,17 @@ struct SettingsView: View {
     @Environment(\.dismiss) private var dismiss
     @State private var showLogoutAlert = false
     @State private var showClearDataAlert = false
+    @State private var showClearCacheAlert = false
     @State private var showResyncFlow = false
     @State private var showLoginFlow = false
+    @State private var cacheSize: Int64 = 0
 
     private let api = AfdianAPIService.shared
     private let sync = SyncService.shared
     private let db = DatabaseService.shared
     private let progressStore = PlaybackProgressStore.shared
     private let player = AudioPlayerService.shared
+    private let audioCache = AudioCacheService.shared
 
     var body: some View {
         NavigationStack {
@@ -114,6 +117,27 @@ struct SettingsView: View {
                     }
                     .listRowBackground(Theme.Colors.cardBackground)
 
+                    // MARK: 缓存
+                    Section {
+                        HStack {
+                            Label("音频缓存", systemImage: "externaldrive.fill")
+                                .foregroundColor(Theme.Colors.textPrimary)
+                            Spacer()
+                            Text(ByteCountFormatter.string(fromByteCount: cacheSize, countStyle: .file))
+                                .foregroundColor(Theme.Colors.textSecondary)
+                                .font(Theme.Typography.caption)
+                        }
+                        Button(role: .destructive) {
+                            showClearCacheAlert = true
+                        } label: {
+                            Label("清空缓存", systemImage: "trash.fill")
+                                .foregroundColor(Theme.Colors.warning)
+                        }
+                    } header: {
+                        sectionHeader("缓存")
+                    }
+                    .listRowBackground(Theme.Colors.cardBackground)
+
                     // MARK: 关于
                     Section {
                         HStack {
@@ -131,6 +155,7 @@ struct SettingsView: View {
                 }
                 .listStyle(.insetGrouped)
                 .scrollContentBackground(.hidden)
+                .onAppear { cacheSize = audioCache.totalCacheSize() }
             }
             .navigationTitle("设置")
             .navigationBarTitleDisplayMode(.inline)
@@ -153,6 +178,16 @@ struct SettingsView: View {
                 Button("清除", role: .destructive) { clearData() }
             } message: {
                 Text("将删除所有本地缓存的创作者、专辑和音频数据，此操作不可撤销")
+            }
+            // 清空缓存确认
+            .alert("清空缓存", isPresented: $showClearCacheAlert) {
+                Button("取消", role: .cancel) {}
+                Button("清空", role: .destructive) {
+                    audioCache.clearCache()
+                    cacheSize = 0
+                }
+            } message: {
+                Text("将删除所有已缓存的音频文件，不影响已同步的专辑数据")
             }
             // 重新同步流程：先选择创作者，确认后同步
             .fullScreenCover(isPresented: $showResyncFlow) {

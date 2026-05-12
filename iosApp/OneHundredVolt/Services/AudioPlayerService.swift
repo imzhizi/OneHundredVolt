@@ -316,6 +316,16 @@ final class AudioPlayerService: @unchecked Sendable {
     private func setupPlayer(url: URL, item: AudioItem) {
         let avItem = playerFactory.makePlayerItem(url: url)
         playerItem = avItem
+
+        Task { [weak self] in
+            guard let self else { return }
+            let mix = await LoudnessBoostTap.makeAudioMix(for: avItem)
+            await MainActor.run {
+                guard self.playerItem === avItem else { return }
+                avItem.audioMix = mix
+            }
+        }
+
         player = playerFactory.makePlayer(playerItem: avItem)
         (player as? AVPlayer)?.automaticallyWaitsToMinimizeStalling = true
 

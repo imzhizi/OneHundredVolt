@@ -1,14 +1,19 @@
 package com.ohv.android.features.home
 
+import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.DragHandle
 import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Waves
@@ -16,10 +21,15 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -41,6 +51,7 @@ private const val PLAYLIST_SECTION_KEY = "playlist_section"
 fun HomeScreen(
     onAlbumClick: (String) -> Unit,
     onCreatorClick: (String) -> Unit,
+    onAllCreatorsClick: () -> Unit,
     onSettingsClick: () -> Unit,
     onPlayerClick: () -> Unit,
     vm: HomeViewModel = viewModel()
@@ -111,6 +122,17 @@ fun HomeScreen(
                         )
                     }
 
+                    if (uiState.creators.size > 3) {
+                        item(key = "all_creators_link") {
+                            TextButton(
+                                onClick = onAllCreatorsClick,
+                                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp)
+                            ) {
+                                Text("查看全部创作者", color = OhvColors.Accent, fontSize = 14.sp)
+                            }
+                        }
+                    }
+
                     item(key = PLAYLIST_SECTION_KEY) {
                         PlaylistSection(
                             playlist = playerState.playlist,
@@ -118,9 +140,15 @@ fun HomeScreen(
                             isLoading = playerState.isLoading,
                             progressRatio = playerState.progressRatio,
                             onPlayItem = { index ->
-                                player.playFromPlaylist(index)
-                                onPlayerClick()
+                                val item = playerState.playlist.getOrNull(index)
+                                if (item?.id == playerState.currentItem?.id) {
+                                    onPlayerClick()
+                                } else {
+                                    player.playFromPlaylist(index)
+                                }
                             },
+                            onReorder = { from, to -> player.reorderPlaylist(from, to) },
+                            onRemove = { index -> player.removeFromPlaylist(index) },
                             onClear = { player.clearAll() }
                         )
                     }
@@ -177,6 +205,9 @@ private fun CreatorSection(
     }
 }
 
+// ─── Playlist Section with drag-reorder + swipe-delete ────────────────────────
+
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun PlaylistSection(
     playlist: List<AudioItem>,
@@ -184,8 +215,13 @@ private fun PlaylistSection(
     isLoading: Boolean,
     progressRatio: Float,
     onPlayItem: (Int) -> Unit,
+    onReorder: (fromIndex: Int, toIndex: Int) -> Unit,
+    onRemove: (index: Int) -> Unit,
     onClear: () -> Unit
 ) {
+    var draggedIndex by remember { mutableIntStateOf(-1) }
+    var dragOffsetY by remember { mutableFloatStateOf(0f) }
+
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -248,14 +284,70 @@ private fun PlaylistSection(
             Column {
                 playlist.forEachIndexed { index, item ->
                     val isCurrent = item.id == currentItemId
-                    PlaylistRow(
-                        item = item,
-                        index = index,
-                        isCurrent = isCurrent,
-                        isLoading = isLoading && isCurrent,
-                        progressRatio = if (isCurrent) progressRatio else 0f,
-                        onClick = { onPlayItem(index) }
+                    val isDragged = index == draggedIndex
+                    val elevation by animateDpAsState(
+                        targetValue = if (isDragged) 4.dp else 0.dp,
+                        label = "dragElevation"
                     )
+
+                    val dismissState = rememberSwipeToDismissBoxState(
+                        confirmValueChange = { value ->
+                            if (value == SwipeToDismissBoxValue.EndToStart) {
+                                onRemove(index)
+                                true
+                            } else false
+                        },
+                        positionalThreshold = { totalDistance -> totalDistance * 0.4f }
+                    )
+
+                    SwipeToDismissBox(
+                        state = dismissState,
+                        enableDismissFromStartToEnd = false,
+                        backgroundContent = {
+                            val color = when (dismissState.targetValue) {
+                                SwipeToDismissBoxValue.EndToStart -> OhvColors.DestructiveRed
+                                else -> Color.Transparent
+                            }
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .background(color, RoundedCornerShape(16.dp))
+                                    .padding(end = 24.dp),
+                                contentAlignment = Alignment.CenterEnd
+                            ) {
+                                Icon(
+                                    Icons.Default.Delete,
+                                    contentDescription = "删除",
+                                    tint = Color.White
+                                )
+                            }
+                        }
+                    ) {
+                        PlaylistRow(
+                            item = item,
+                            index = index,
+                            isCurrent = isCurrent,
+                            isLoading = isLoading && isCurrent,
+                            progressRatio = if (isCurrent) progressRatio else 0f,
+                            isDragged = isDragged,
+                            onClick = { onPlayItem(index) },
+                            onDragStart = { draggedIndex = index },
+                            onDrag = { offset ->
+                                dragOffsetY = offset
+                                val targetIndex = computeTargetIndex(index, offset, 64f)
+                                if (targetIndex != index && targetIndex in playlist.indices) {
+                                    onReorder(index, targetIndex)
+                                    draggedIndex = targetIndex
+                                    dragOffsetY = 0f
+                                }
+                            },
+                            onDragEnd = {
+                                draggedIndex = -1
+                                dragOffsetY = 0f
+                            }
+                        )
+                    }
+
                     if (index < playlist.lastIndex) {
                         HorizontalDivider(
                             color = OhvColors.Separator,
@@ -268,6 +360,11 @@ private fun PlaylistSection(
     }
 }
 
+private fun computeTargetIndex(currentIndex: Int, offsetY: Float, itemHeight: Float): Int {
+    val shift = (offsetY / itemHeight).toInt()
+    return currentIndex + shift
+}
+
 @Composable
 private fun PlaylistRow(
     item: AudioItem,
@@ -275,13 +372,17 @@ private fun PlaylistRow(
     isCurrent: Boolean,
     isLoading: Boolean,
     progressRatio: Float,
-    onClick: () -> Unit
+    isDragged: Boolean,
+    onClick: () -> Unit,
+    onDragStart: () -> Unit,
+    onDrag: (Float) -> Unit,
+    onDragEnd: () -> Unit
 ) {
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .clickable(onClick = onClick)
-            .background(if (isCurrent) OhvColors.Accent.copy(alpha = 0.08f) else OhvColors.CardBackground)
+            .background(if (isCurrent) OhvColors.Accent.copy(alpha = 0.08f) else if (isDragged) OhvColors.Separator else OhvColors.CardBackground)
             .padding(horizontal = 0.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
@@ -357,13 +458,33 @@ private fun PlaylistRow(
             }
         }
 
-        Spacer(modifier = Modifier.width(12.dp))
+        // Drag handle
+        Icon(
+            Icons.Default.DragHandle,
+            contentDescription = "拖拽排序",
+            tint = OhvColors.SecondaryText.copy(alpha = 0.6f),
+            modifier = Modifier
+                .size(24.dp)
+                .pointerInput(Unit) {
+                    detectDragGesturesAfterLongPress(
+                        onDragStart = { onDragStart() },
+                        onDrag = { change, dragAmount ->
+                            change.consume()
+                            onDrag(dragAmount.y)
+                        },
+                        onDragEnd = { onDragEnd() },
+                        onDragCancel = { onDragEnd() }
+                    )
+                }
+        )
+
+        Spacer(modifier = Modifier.width(8.dp))
 
         Text(
             text = if (index == 0) "当前" else "${index + 1}",
             color = if (isCurrent) OhvColors.Accent else OhvColors.SecondaryText,
             fontSize = 12.sp,
-            modifier = Modifier.padding(end = 16.dp)
+            modifier = Modifier.padding(end = 12.dp)
         )
     }
 }

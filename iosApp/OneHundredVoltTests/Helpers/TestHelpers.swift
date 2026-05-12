@@ -23,6 +23,7 @@ struct TestDeps {
         if let items = playlistItems, let data = try? JSONEncoder().encode(items) {
             defaults.set(data, forKey: "saved_playlist_v1")
         }
+        defaults.removeObject(forKey: "playback_rate")
 
         service = AudioPlayerService(
             playerFactory: factory,

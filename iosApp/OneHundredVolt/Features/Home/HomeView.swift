@@ -28,6 +28,7 @@ struct HomeView: View {
                             }
 
                             // MARK: 创作者 + 专辑（最多显示前 3 个）
+                            Spacer().frame(height: Theme.Spacing.sm)
                             ForEach(viewModel.creators.prefix(maxVisibleCreators)) { creator in
                                 creatorSection(creator: creator)
                             }
@@ -276,9 +277,11 @@ private struct PlaylistRowView: View {
     @Binding var showPlayer: Bool
 
     private let player = AudioPlayerService.shared
+    private let progressStore = PlaybackProgressStore.shared
 
     var body: some View {
         let isCurrent = player.currentItem?.id == item.id
+        let isCompleted = progressStore.isCompleted(item.id)
         let isActivelyPlaying = isCurrent && (player.isPlaying || player.isLoading)
 
         HStack(spacing: 12) {
@@ -296,21 +299,29 @@ private struct PlaylistRowView: View {
                 .frame(width: 44, height: 44)
                 .clipShape(RoundedRectangle(cornerRadius: 6))
 
-                if isCurrent && (player.isLoading || player.isPlaying) {
+                if isCurrent || isCompleted {
                     RoundedRectangle(cornerRadius: 6)
                         .fill(Color.black.opacity(0.45))
                         .frame(width: 44, height: 44)
 
-                    if player.isLoading {
+                    if player.isLoading && isCurrent {
                         ProgressView()
                             .progressViewStyle(.circular)
                             .tint(.white)
                             .scaleEffect(0.7)
-                    } else {
+                    } else if player.isPlaying && isCurrent {
                         Image(systemName: "waveform")
                             .font(.system(size: 16, weight: .medium))
                             .foregroundColor(.white)
                             .symbolEffect(.variableColor.iterative)
+                    } else if isCurrent {
+                        Image(systemName: "pause.fill")
+                            .font(.system(size: 14, weight: .medium))
+                            .foregroundColor(.white)
+                    } else {
+                        Image(systemName: "checkmark")
+                            .font(.system(size: 14, weight: .bold))
+                            .foregroundColor(.white)
                     }
                 }
             }
@@ -328,7 +339,13 @@ private struct PlaylistRowView: View {
             }
 
             Spacer(minLength: 0)
+
+            // 拖拽手柄
+            Image(systemName: "line.3.horizontal")
+                .font(.system(size: 12))
+                .foregroundColor(Theme.Colors.textSecondary.opacity(0.4))
         }
+        .opacity(isCompleted && !isCurrent ? 0.4 : 1)
         .padding(.vertical, 10)
         .padding(.leading, 0)
         .padding(.trailing, Theme.Spacing.sm)
@@ -336,9 +353,7 @@ private struct PlaylistRowView: View {
             if isCurrent {
                 GeometryReader { geo in
                     ZStack(alignment: .leading) {
-                        // 底色
                         Theme.Colors.accent.opacity(0.06)
-                        // 进度填充
                         Theme.Colors.accent.opacity(0.12)
                             .frame(width: geo.size.width * player.progressRatio)
                     }
@@ -347,12 +362,14 @@ private struct PlaylistRowView: View {
         }
         .contentShape(Rectangle())
         .onTapGesture {
-            guard !isActivelyPlaying else { return }
+            if isActivelyPlaying {
+                showPlayer = true
+                return
+            }
             if index != 0 {
                 player.playlist.move(fromOffsets: IndexSet(integer: index), toOffset: 0)
             }
             player.play(playlist: player.playlist, startAt: 0)
-            showPlayer = true
         }
     }
 }

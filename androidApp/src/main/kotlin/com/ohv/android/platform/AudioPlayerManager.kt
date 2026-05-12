@@ -2,6 +2,8 @@ package com.ohv.android.platform
 
 import android.content.ComponentName
 import android.content.Context
+import android.os.Bundle
+import androidx.core.os.bundleOf
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
 import androidx.media3.common.Player
@@ -12,6 +14,8 @@ import com.google.common.util.concurrent.MoreExecutors
 import com.ohv.shared.api.AfdianApiService
 import com.ohv.shared.models.AudioItem
 import com.ohv.shared.platform.KeyValueStore
+import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.Json
 import com.ohv.shared.platform.SecureStorage
 import com.ohv.shared.progress.PlaybackProgressStore
 import kotlinx.coroutines.CoroutineScope
@@ -55,6 +59,8 @@ class AudioPlayerManager private constructor(private val context: Context) {
 
         private const val PLAYBACK_RATE_KEY = "playback_rate"
         private const val LOUDNESS_BOOST_KEY = "loudness_boost_enabled"
+        private const val PLAYLIST_KEY = "saved_playlist_v1"
+        private val json = Json { ignoreUnknownKeys = true }
 
         fun init(context: Context) {
             if (instance == null) {
@@ -85,6 +91,30 @@ class AudioPlayerManager private constructor(private val context: Context) {
     )
     val state: StateFlow<PlayerState> = _state.asStateFlow()
 
+    private fun persistPlaylist() {
+        if (_playlist.isEmpty()) {
+            kvStore.putString(PLAYLIST_KEY, "")
+        } else {
+            kvStore.putString(PLAYLIST_KEY, json.encodeToString(_playlist.toList()))
+        }
+    }
+
+    private fun restorePlaylist() {
+        val data = kvStore.getString(PLAYLIST_KEY) ?: return
+        if (data.isBlank()) return
+        try {
+            val items = json.decodeFromString<List<AudioItem>>(data)
+            if (items.isNotEmpty()) {
+                _playlist.clear()
+                _playlist.addAll(items)
+                _state.value = _state.value.copy(
+                    currentItem = items[0],
+                    playlist = items
+                )
+            }
+        } catch (_: Exception) {}
+    }
+
     private val _scrollToPlaylist = MutableStateFlow(false)
     val scrollToPlaylist: StateFlow<Boolean> = _scrollToPlaylist.asStateFlow()
 
@@ -97,6 +127,7 @@ class AudioPlayerManager private constructor(private val context: Context) {
     private var sleepEndMs: Long = 0L
 
     init {
+        restorePlaylist()
         connectToService()
     }
 
@@ -204,6 +235,7 @@ class AudioPlayerManager private constructor(private val context: Context) {
     private fun advanceToNext() {
         if (_playlist.isNotEmpty()) _playlist.removeAt(0)
         if (_playlist.isEmpty()) {
+            persistPlaylist()
             _state.value = PlayerState(
                 playbackRate = playbackRate,
                 loudnessBoostEnabled = loudnessBoostEnabled
@@ -211,6 +243,7 @@ class AudioPlayerManager private constructor(private val context: Context) {
             stopProgressPolling()
             return
         }
+        persistPlaylist()
         scope.launch { loadAndPlay(_playlist[0]) }
     }
 
@@ -257,20 +290,24 @@ class AudioPlayerManager private constructor(private val context: Context) {
                 playlist = _playlist.toList(),
                 isLoading = false
             )
+            persistPlaylist()
         } catch (_: Exception) {
             _state.value = _state.value.copy(isLoading = false)
         }
     }
 
     fun playImmediately(item: AudioItem) {
-        _playlist.clear()
-        _playlist.add(item)
+        _playlist.removeAll { it.id == item.id }
+        _playlist.add(0, item)
+        _state.value = _state.value.copy(playlist = _playlist.toList())
+        persistPlaylist()
         scope.launch { loadAndPlay(item) }
     }
 
     fun appendAndPlay(items: List<AudioItem>) {
         _playlist.clear()
         _playlist.addAll(items)
+        persistPlaylist()
         if (_playlist.isNotEmpty()) {
             scope.launch { loadAndPlay(_playlist[0]) }
         }
@@ -280,6 +317,44 @@ class AudioPlayerManager private constructor(private val context: Context) {
         if (_playlist.none { it.id == item.id }) {
             _playlist.add(item)
             _state.value = _state.value.copy(playlist = _playlist.toList())
+            persistPlaylist()
+        }
+    }
+
+    fun reorderPlaylist(fromIndex: Int, toIndex: Int) {
+        if (fromIndex !in _playlist.indices || toIndex !in _playlist.indices) return
+        if (fromIndex == toIndex) return
+        val item = _playlist.removeAt(fromIndex)
+        _playlist.add(toIndex, item)
+        syncAfterReorder()
+        _state.value = _state.value.copy(playlist = _playlist.toList())
+        persistPlaylist()
+    }
+
+    fun removeFromPlaylist(index: Int) {
+        if (index !in _playlist.indices) return
+        val wasCurrent = index == 0
+        _playlist.removeAt(index)
+        if (_playlist.isEmpty()) {
+            persistPlaylist()
+            clearAll()
+            return
+        }
+        if (wasCurrent) {
+            persistPlaylist()
+            scope.launch { loadAndPlay(_playlist[0]) }
+        } else {
+            _state.value = _state.value.copy(playlist = _playlist.toList())
+            persistPlaylist()
+        }
+    }
+
+    private fun syncAfterReorder() {
+        val current = _state.value.currentItem ?: return
+        val idx = _playlist.indexOfFirst { it.id == current.id }
+        if (idx > 0) {
+            val item = _playlist.removeAt(idx)
+            _playlist.add(0, item)
         }
     }
 
@@ -287,6 +362,7 @@ class AudioPlayerManager private constructor(private val context: Context) {
         if (index !in _playlist.indices) return
         val item = _playlist.removeAt(index)
         _playlist.add(0, item)
+        persistPlaylist()
         scope.launch { loadAndPlay(item) }
     }
 
@@ -345,6 +421,11 @@ class AudioPlayerManager private constructor(private val context: Context) {
     fun setLoudnessBoostEnabled(enabled: Boolean) {
         kvStore.putBoolean(LOUDNESS_BOOST_KEY, enabled)
         _state.value = _state.value.copy(loudnessBoostEnabled = enabled)
+        // 同步到正在运行的 AudioPlaybackService 中的 LoudnessEnhancer
+        controller?.sendCustomCommand(
+            AudioPlaybackService.COMMAND_SET_LOUDNESS,
+            bundleOf("enabled" to enabled)
+        )
     }
 
     fun setSleepTimer(minutes: Int) {
@@ -361,6 +442,7 @@ class AudioPlayerManager private constructor(private val context: Context) {
         controller?.stop()
         controller?.clearMediaItems()
         _playlist.clear()
+        persistPlaylist()
         sleepEndMs = 0L
         stopProgressPolling()
         _state.value = PlayerState(

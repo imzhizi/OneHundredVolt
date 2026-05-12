@@ -55,6 +55,25 @@ final class AudioCacheService {
         try? FileManager.default.removeItem(at: url)
     }
 
+    func totalCacheSize() -> Int64 {
+        let fm = FileManager.default
+        guard let items = try? fm.contentsOfDirectory(
+            at: cacheDir, includingPropertiesForKeys: [.fileSizeKey]
+        ) else { return 0 }
+        return items.reduce(Int64(0)) { sum, item in
+            let size = (try? item.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
+            return sum + Int64(size)
+        }
+    }
+
+    func clearCache() {
+        let fm = FileManager.default
+        guard let items = try? fm.contentsOfDirectory(atPath: cacheDir.path) else { return }
+        for item in items {
+            try? fm.removeItem(at: cacheDir.appendingPathComponent(item))
+        }
+    }
+
     // MARK: - LRU 淘汰
 
     private func touch(_ url: URL) {

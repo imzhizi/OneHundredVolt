@@ -28,6 +28,7 @@ import com.ohv.shared.progress.PlaybackProgressStore
 import com.ohv.shared.sync.SyncService
 import java.text.SimpleDateFormat
 import java.util.*
+import kotlin.math.roundToLong
 
 /**
  * 设置页（对应 iOS SettingsView.swift）
@@ -52,12 +53,6 @@ fun SettingsScreen(
     val progressStore = remember { PlaybackProgressStore.shared }
     val playerManager = remember { AudioPlayerManager.shared }
     val syncService = remember { SyncService(api, db, kvStore) }
-    val playerState by playerManager.state.collectAsState()
-    var loudnessBoostEnabled by remember { mutableStateOf(playerState.loudnessBoostEnabled) }
-
-    LaunchedEffect(playerState.loudnessBoostEnabled) {
-        loudnessBoostEnabled = playerState.loudnessBoostEnabled
-    }
 
     // 实时读取状态
     val isLoggedIn by remember { derivedStateOf { api.isLoggedIn } }
@@ -68,6 +63,12 @@ fun SettingsScreen(
 
     var showLogoutAlert by remember { mutableStateOf(false) }
     var showClearDataAlert by remember { mutableStateOf(false) }
+    var showClearCacheAlert by remember { mutableStateOf(false) }
+    var cacheSizeBytes by remember { mutableStateOf(0L) }
+
+    LaunchedEffect(Unit) {
+        cacheSizeBytes = calculateCacheSize()
+    }
 
     Scaffold(
         containerColor = OhvColors.Background,
@@ -152,35 +153,6 @@ fun SettingsScreen(
                 )
             }
 
-            // ── 播放 ──────────────────────────────────────────────────────────
-            SettingsSection(title = "播放") {
-                SettingsRow(
-                    icon = Icons.Default.GraphicEq,
-                    label = "音量增强",
-                    trailing = {
-                        Switch(
-                            checked = loudnessBoostEnabled,
-                            onCheckedChange = {
-                                loudnessBoostEnabled = it
-                                playerManager.setLoudnessBoostEnabled(it)
-                            }
-                        )
-                    }
-                )
-                HorizontalDivider(color = OhvColors.Separator)
-                SettingsRow(
-                    icon = Icons.Default.VolumeUp,
-                    label = "增强幅度",
-                    trailing = {
-                        Text(
-                            if (loudnessBoostEnabled) "+6 dB" else "关闭",
-                            color = if (loudnessBoostEnabled) OhvColors.Accent else OhvColors.SecondaryText,
-                            fontSize = 13.sp
-                        )
-                    }
-                )
-            }
-
             // ── 本地数据 ──────────────────────────────────────────────────────
             SettingsSection(title = "本地数据") {
                 SettingsRow(
@@ -207,6 +179,23 @@ fun SettingsScreen(
                     labelColor = Color(0xFFFF3B30),
                     iconTint = Color(0xFFFF3B30),
                     onClick = { showClearDataAlert = true }
+                )
+            }
+
+            // ── 缓存 ──────────────────────────────────────────────────────────
+            SettingsSection(title = "缓存") {
+                SettingsRow(
+                    icon = Icons.Default.Storage,
+                    label = "音频缓存",
+                    trailing = { Text(formatCacheSize(cacheSizeBytes), color = OhvColors.SecondaryText, fontSize = 13.sp) }
+                )
+                HorizontalDivider(color = OhvColors.Separator)
+                SettingsButton(
+                    icon = Icons.Default.CleaningServices,
+                    label = "清空缓存",
+                    labelColor = Color(0xFFFF9500),
+                    iconTint = Color(0xFFFF9500),
+                    onClick = { showClearCacheAlert = true }
                 )
             }
 
@@ -266,6 +255,30 @@ fun SettingsScreen(
             },
             dismissButton = {
                 TextButton(onClick = { showClearDataAlert = false }) {
+                    Text("取消", color = OhvColors.SecondaryText)
+                }
+            },
+            containerColor = OhvColors.CardBackground
+        )
+    }
+
+    // ── 清空缓存确认弹窗 ──────────────────────────────────────────────────────
+    if (showClearCacheAlert) {
+        AlertDialog(
+            onDismissRequest = { showClearCacheAlert = false },
+            title = { Text("清空缓存", color = OhvColors.White) },
+            text = { Text("将删除所有已缓存的音频文件，不影响已同步的专辑数据", color = OhvColors.SecondaryText) },
+            confirmButton = {
+                TextButton(onClick = {
+                    showClearCacheAlert = false
+                    clearAudioCache()
+                    cacheSizeBytes = 0L
+                }) {
+                    Text("清空", color = Color(0xFFFF9500))
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showClearCacheAlert = false }) {
                     Text("取消", color = OhvColors.SecondaryText)
                 }
             },
@@ -358,4 +371,24 @@ private fun SettingsButton(
 private fun formatDate(epochMs: Long): String {
     val sdf = SimpleDateFormat("MM-dd HH:mm", Locale.getDefault())
     return sdf.format(Date(epochMs))
+}
+
+private fun calculateCacheSize(): Long {
+    val cacheDir = java.io.File(com.ohv.shared.platform.getCacheDir())
+    return cacheDir.walkTopDown().filter { it.isFile }.sumOf { it.length() }
+}
+
+private fun clearAudioCache() {
+    val cacheDir = java.io.File(com.ohv.shared.platform.getCacheDir())
+    cacheDir.walkTopDown().forEach { file ->
+        if (file.isFile) file.delete()
+    }
+}
+
+private fun formatCacheSize(bytes: Long): String {
+    if (bytes <= 0) return "0 B"
+    val units = arrayOf("B", "KB", "MB", "GB")
+    val digitGroups = (Math.log10(bytes.toDouble()) / Math.log10(1024.0)).toInt().coerceAtMost(units.lastIndex)
+    val value = bytes / Math.pow(1024.0, digitGroups.toDouble())
+    return "${(value * 10).roundToLong() / 10.0} ${units[digitGroups]}"
 }

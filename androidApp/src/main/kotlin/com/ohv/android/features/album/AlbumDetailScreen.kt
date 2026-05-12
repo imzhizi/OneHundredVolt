@@ -1,21 +1,26 @@
 package com.ohv.android.features.album
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.filled.AddCircle
+import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.CheckCircleOutline
+import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.filled.Language
 import androidx.compose.material.icons.filled.MusicNote
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.PlayCircleFilled
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalUriHandler
@@ -34,6 +39,7 @@ import com.ohv.android.theme.OhvColors
 import com.ohv.shared.db.DatabaseService
 import com.ohv.shared.models.Album
 import com.ohv.shared.models.AudioItem
+import com.ohv.shared.progress.PlaybackProgressStore
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -45,27 +51,31 @@ import kotlin.math.roundToInt
 data class AlbumDetailUiState(
     val album: Album? = null,
     val items: List<AudioItem> = emptyList(),
+    val completedIds: Set<String> = emptySet(),
     val isLoading: Boolean = true
 )
 
 class AlbumDetailViewModel(private val albumId: String) : ViewModel() {
 
     private val db = DatabaseService.shared
+    private val progressStore = PlaybackProgressStore.shared
 
     private val _uiState = MutableStateFlow(AlbumDetailUiState())
     val uiState: StateFlow<AlbumDetailUiState> = _uiState.asStateFlow()
 
-    init {
-        load()
-    }
+    init { load() }
 
     private fun load() {
         viewModelScope.launch {
             val album = db.albums.value.firstOrNull { it.id == albumId }
             val items = db.audioItemsForAlbum(albumId)
+            val completedIds = items.mapNotNull { item ->
+                if (progressStore.isCompleted(item.id)) item.id else null
+            }.toSet()
             _uiState.value = AlbumDetailUiState(
                 album = album,
                 items = items,
+                completedIds = completedIds,
                 isLoading = false
             )
         }
@@ -80,13 +90,6 @@ class AlbumDetailViewModel(private val albumId: String) : ViewModel() {
 
 // ─── Screen ───────────────────────────────────────────────────────────────────
 
-/**
- * 专辑详情页（对应 iOS AlbumDetailView.swift）
- *
- * @param albumId       专辑 ID
- * @param onBack        返回
- * @param onPlayerClick 点击播放器（迷你播放器 / 播放按钮）→ 导航到 PlayerScreen
- */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AlbumDetailScreen(
@@ -135,7 +138,6 @@ fun AlbumDetailScreen(
             )
         },
         bottomBar = {
-            // 迷你播放器：有正在播放内容时显示
             if (playerState.currentItem != null) {
                 MiniPlayerBar(onExpand = onPlayerClick)
             }
@@ -157,32 +159,36 @@ fun AlbumDetailScreen(
                     modifier = Modifier.fillMaxSize(),
                     contentPadding = PaddingValues(bottom = 24.dp)
                 ) {
-                    // 专辑头部
+                    // Album header
                     item {
                         AlbumHeader(
                             album = uiState.album,
                             onPlayAll = {
-                                // 全部播放：从第一集开始，整个专辑入队
                                 player.appendAndPlay(uiState.items)
                                 onPlayerClick()
                             }
                         )
                     }
 
-                    // 音频列表
+                    // Audio list
                     itemsIndexed(uiState.items, key = { _, item -> item.id }) { index, item ->
                         val isCurrentlyPlaying = playerState.currentItem?.id == item.id
+                        val isCompleted = uiState.completedIds.contains(item.id)
+                        val isInPlaylist = playerState.playlist.any { it.id == item.id }
 
                         AudioRow(
                             item = item,
                             index = index,
                             isCurrentlyPlaying = isCurrentlyPlaying,
+                            isCompleted = isCompleted,
+                            isInPlaylist = isInPlaylist,
+                            isLoading = playerState.isLoading && isCurrentlyPlaying,
                             onPlay = {
                                 player.playImmediately(item)
                                 onPlayerClick()
                             },
-                            onOpenWeb = {
-                                uriHandler.openUri("https://afdian.com/p/${item.id}")
+                            onAddToQueue = {
+                                player.appendToPlaylist(item)
                             }
                         )
                         if (index < uiState.items.lastIndex) {
@@ -198,7 +204,7 @@ fun AlbumDetailScreen(
     }
 }
 
-// ─── 专辑头部 ─────────────────────────────────────────────────────────────────
+// ─── Album Header ─────────────────────────────────────────────────────────────
 
 @Composable
 private fun AlbumHeader(
@@ -278,34 +284,39 @@ private fun AlbumHeader(
     }
 }
 
-// ─── 音频行 ───────────────────────────────────────────────────────────────────
+// ─── Audio Row ────────────────────────────────────────────────────────────────
 
 @Composable
 private fun AudioRow(
     item: AudioItem,
     index: Int,
     isCurrentlyPlaying: Boolean,
+    isCompleted: Boolean,
+    isInPlaylist: Boolean,
+    isLoading: Boolean,
     onPlay: () -> Unit,
-    onOpenWeb: () -> Unit
+    onAddToQueue: () -> Unit
 ) {
+    val dimmed = isCompleted && !isCurrentlyPlaying
+
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable(onClick = onPlay)
             .background(
                 if (isCurrentlyPlaying) OhvColors.Accent.copy(alpha = 0.08f)
-                else androidx.compose.ui.graphics.Color.Transparent
+                else Color.Transparent
             )
             .padding(horizontal = 16.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(8.dp)
     ) {
-        // 封面
+        // Cover with state overlay
         Box(
             modifier = Modifier
                 .size(44.dp)
                 .clip(RoundedCornerShape(4.dp))
-                .background(OhvColors.CardBackground),
+                .background(OhvColors.CardBackground)
+                .alpha(if (dimmed) 0.4f else 1f),
             contentAlignment = Alignment.Center
         ) {
             if (item.coverUrl != null) {
@@ -323,13 +334,31 @@ private fun AudioRow(
                     modifier = Modifier.size(20.dp)
                 )
             }
+
+            // State overlay
+            if (isCurrentlyPlaying || dimmed) {
+                Box(
+                    modifier = Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.35f)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    when {
+                        isCurrentlyPlaying && isLoading -> CircularProgressIndicator(color = Color.White, strokeWidth = 2.dp, modifier = Modifier.size(16.dp))
+                        isCurrentlyPlaying -> Icon(Icons.Default.GraphicEq, contentDescription = null, tint = Color.White, modifier = Modifier.size(18.dp))
+                        dimmed -> Icon(Icons.Default.CheckCircleOutline, contentDescription = "已完成", tint = Color.White, modifier = Modifier.size(18.dp))
+                    }
+                }
+            }
         }
 
-        // 标题 + 时长
+        // Title + duration
         Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
             Text(
                 item.title,
-                color = if (isCurrentlyPlaying) OhvColors.Accent else OhvColors.White,
+                color = when {
+                    isCurrentlyPlaying -> OhvColors.Accent
+                    dimmed -> OhvColors.SecondaryText
+                    else -> OhvColors.White
+                },
                 fontSize = 14.sp,
                 fontWeight = if (isCurrentlyPlaying) FontWeight.SemiBold else FontWeight.Normal,
                 maxLines = 1,
@@ -337,34 +366,52 @@ private fun AudioRow(
             )
             Text(
                 item.duration.toMinutesOnly(),
-                color = OhvColors.SecondaryText,
+                color = OhvColors.SecondaryText.copy(alpha = if (dimmed) 0.6f else 1f),
                 fontSize = 12.sp
             )
         }
 
-        // 播放按钮 / 正在播放指示
-        IconButton(onClick = onPlay) {
+        // Add to queue button
+        IconButton(onClick = onAddToQueue, modifier = Modifier.size(32.dp)) {
             Icon(
-                Icons.Default.PlayArrow,
-                contentDescription = "播放",
-                tint = if (isCurrentlyPlaying) OhvColors.Accent else OhvColors.SecondaryText,
-                modifier = Modifier.size(24.dp)
+                imageVector = if (isInPlaylist) Icons.Default.CheckCircle else Icons.Default.AddCircle,
+                contentDescription = if (isInPlaylist) "已在队列" else "加入队列",
+                tint = when {
+                    isInPlaylist -> OhvColors.Accent
+                    dimmed -> OhvColors.SecondaryText.copy(alpha = 0.4f)
+                    else -> OhvColors.SecondaryText
+                },
+                modifier = Modifier.size(22.dp)
             )
+        }
+
+        // Play now button
+        IconButton(onClick = onPlay, modifier = Modifier.size(32.dp)) {
+            if (isCurrentlyPlaying && isLoading) {
+                CircularProgressIndicator(color = OhvColors.Accent, strokeWidth = 2.dp, modifier = Modifier.size(18.dp))
+            } else {
+                Icon(
+                    Icons.Default.PlayCircleFilled,
+                    contentDescription = "播放",
+                    tint = OhvColors.Accent.copy(alpha = if (dimmed) 0.4f else 1f),
+                    modifier = Modifier.size(22.dp)
+                )
+            }
         }
     }
 }
 
-// ─── 时长格式化扩展 ───────────────────────────────────────────────────────────
+// ─── Duration formatting ──────────────────────────────────────────────────────
 
 private fun Double.toMinutesOnly(): String {
-    val total = this.roundToInt()
+    val total = roundToInt()
     val m = total / 60
     val s = total % 60
     return "%d:%02d".format(m, s)
 }
 
 private fun Double.toHumanReadable(): String {
-    val total = this.roundToInt()
+    val total = roundToInt()
     val h = total / 3600
     val m = (total % 3600) / 60
     return when {

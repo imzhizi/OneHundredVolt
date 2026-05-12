@@ -221,7 +221,7 @@ struct AlbumDetailView: View {
                 .clipShape(RoundedRectangle(cornerRadius: 4))
                 .opacity(dimmed ? 0.4 : 1.0)
 
-                if (isCurrent && (isItemLoading || player.isPlaying)) || dimmed {
+                if isCurrent || dimmed {
                     RoundedRectangle(cornerRadius: 4)
                         .fill(Color.black.opacity(dimmed ? 0.25 : 0.45))
                         .frame(width: 44, height: 44)
@@ -237,6 +237,10 @@ struct AlbumDetailView: View {
                         .font(.system(size: 16, weight: .medium))
                         .foregroundColor(.white)
                         .symbolEffect(.variableColor.iterative)
+                } else if isCurrent && !player.isPlaying {
+                    Image(systemName: "pause.fill")
+                        .font(.system(size: 14, weight: .medium))
+                        .foregroundColor(.white)
                 } else if dimmed {
                     Image(systemName: "checkmark")
                         .font(.system(size: 13, weight: .semibold))

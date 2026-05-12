@@ -1,5 +1,9 @@
 package com.ohv.android.features.navigation
 
+import androidx.compose.animation.AnimatedContentTransitionScope
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
 import androidx.compose.runtime.Composable
 import androidx.navigation.NavType
 import androidx.navigation.compose.NavHost
@@ -7,6 +11,8 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.ohv.android.features.album.AlbumDetailScreen
+import com.ohv.android.features.creator.AllCreatorsScreen
+import com.ohv.android.features.creator.CreatorScreen
 import com.ohv.android.features.home.HomeScreen
 import com.ohv.android.features.onboarding.CreatorSelectScreen
 import com.ohv.android.features.onboarding.LoginWebViewScreen
@@ -36,6 +42,7 @@ sealed class Screen(val route: String) {
     object Creator : Screen("creator/{creatorId}") {
         fun createRoute(creatorId: String) = "creator/$creatorId"
     }
+    object AllCreators : Screen("all_creators")
     object Settings : Screen("settings")
     object Player : Screen("player")
 }
@@ -111,6 +118,9 @@ fun AppNavHost(
                 onCreatorClick = { creatorId ->
                     navController.navigate(Screen.Creator.createRoute(creatorId))
                 },
+                onAllCreatorsClick = {
+                    navController.navigate(Screen.AllCreators.route)
+                },
                 onSettingsClick = { navController.navigate(Screen.Settings.route) },
                 onPlayerClick = { navController.navigate(Screen.Player.route) }
             )
@@ -118,7 +128,9 @@ fun AppNavHost(
 
         composable(
             route = Screen.Album.route,
-            arguments = listOf(navArgument("albumId") { type = NavType.StringType })
+            arguments = listOf(navArgument("albumId") { type = NavType.StringType }),
+            enterTransition = { slideIntoContainer(AnimatedContentTransitionScope.SlideDirection.Start, animationSpec = tween(300)) },
+            exitTransition = { slideOutOfContainer(AnimatedContentTransitionScope.SlideDirection.End, animationSpec = tween(300)) }
         ) { backStackEntry ->
             val albumId = backStackEntry.arguments?.getString("albumId") ?: return@composable
             AlbumDetailScreen(
@@ -130,14 +142,38 @@ fun AppNavHost(
 
         composable(
             route = Screen.Creator.route,
-            arguments = listOf(navArgument("creatorId") { type = NavType.StringType })
-        ) {
-            // TODO: CreatorScreen（创作者详情页，当前用 AlbumDetail 代替）
-            // 暂时 pop 回去，避免空白页
-            navController.popBackStack()
+            arguments = listOf(navArgument("creatorId") { type = NavType.StringType }),
+            enterTransition = { slideIntoContainer(AnimatedContentTransitionScope.SlideDirection.Start, animationSpec = tween(300)) },
+            exitTransition = { slideOutOfContainer(AnimatedContentTransitionScope.SlideDirection.End, animationSpec = tween(300)) }
+        ) { backStackEntry ->
+            val creatorId = backStackEntry.arguments?.getString("creatorId") ?: return@composable
+            CreatorScreen(
+                creatorId = creatorId,
+                onBack = { navController.popBackStack() },
+                onAlbumClick = { albumId ->
+                    navController.navigate(Screen.Album.createRoute(albumId))
+                }
+            )
         }
 
-        composable(Screen.Settings.route) {
+        composable(
+            Screen.AllCreators.route,
+            enterTransition = { slideIntoContainer(AnimatedContentTransitionScope.SlideDirection.Start, animationSpec = tween(300)) },
+            exitTransition = { slideOutOfContainer(AnimatedContentTransitionScope.SlideDirection.End, animationSpec = tween(300)) }
+        ) {
+            AllCreatorsScreen(
+                onBack = { navController.popBackStack() },
+                onCreatorClick = { creatorId ->
+                    navController.navigate(Screen.Creator.createRoute(creatorId))
+                }
+            )
+        }
+
+        composable(
+            Screen.Settings.route,
+            enterTransition = { slideIntoContainer(AnimatedContentTransitionScope.SlideDirection.Start, animationSpec = tween(300)) },
+            exitTransition = { slideOutOfContainer(AnimatedContentTransitionScope.SlideDirection.End, animationSpec = tween(300)) }
+        ) {
             SettingsScreen(
                 onBack = { navController.popBackStack() },
                 onLogout = {
@@ -156,7 +192,11 @@ fun AppNavHost(
             )
         }
 
-        composable(Screen.Player.route) {
+        composable(
+            Screen.Player.route,
+            enterTransition = { slideIntoContainer(AnimatedContentTransitionScope.SlideDirection.Up, animationSpec = tween(350)) },
+            exitTransition = { slideOutOfContainer(AnimatedContentTransitionScope.SlideDirection.Down, animationSpec = tween(300)) }
+        ) {
             PlayerScreen(
                 onDismiss = { navController.popBackStack() },
                 onShowPlaylist = {
