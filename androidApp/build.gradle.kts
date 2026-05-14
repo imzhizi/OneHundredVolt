@@ -90,4 +90,7 @@ dependencies {
 
     // Serialization (playlist persistence)
     implementation(libs.kotlinx.serialization.json)
+
+    // Drag-and-drop reorder
+    implementation("sh.calvin.reorderable:reorderable:3.1.0")
 }

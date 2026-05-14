@@ -1,18 +1,16 @@
 package com.ohv.android.features.home
 
-import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.DragHandle
 import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.filled.Settings
@@ -21,15 +19,14 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableFloatStateOf
-import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -37,12 +34,15 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import coil3.compose.AsyncImage
-import kotlin.math.roundToInt
 import com.ohv.android.features.player.MiniPlayerBar
 import com.ohv.android.platform.AudioPlayerManager
 import com.ohv.android.theme.OhvColors
 import com.ohv.shared.models.AudioItem
 import com.ohv.shared.models.Creator
+import com.ohv.shared.progress.PlaybackProgressStore
+import sh.calvin.reorderable.ReorderableItem
+import sh.calvin.reorderable.rememberReorderableLazyListState
+import kotlin.math.roundToInt
 
 private const val PLAYLIST_SECTION_KEY = "playlist_section"
 
@@ -61,13 +61,42 @@ fun HomeScreen(
     val playerState by player.state.collectAsStateWithLifecycle()
     val scrollToPlaylist by player.scrollToPlaylist.collectAsStateWithLifecycle()
     val listState = rememberLazyListState()
+    val haptic = LocalHapticFeedback.current
+
+    // 播放列表头在 LazyColumn 中的索引
+    val playlistHeaderIndex = run {
+        var idx = uiState.creators.size
+        if (uiState.creators.isEmpty()) idx += 1 // empty state item
+        if (uiState.creators.size > 3) idx += 1   // "all creators" link
+        idx
+    }
+
+    // 播放列表条目的起始索引（头之后）
+    val playlistStartIndex = playlistHeaderIndex + 1
+
+    val reorderableState = rememberReorderableLazyListState(listState) { from, to ->
+        // from.index / to.index 是 ReorderableItem 在 LazyColumn 中的全局索引，
+        // 需要减去 playlistStartIndex 得到播放列表内的偏移
+        val fromPlaylist = from.index - playlistStartIndex
+        val toPlaylist = to.index - playlistStartIndex
+        if (fromPlaylist != toPlaylist && fromPlaylist >= 0 && toPlaylist >= 0) {
+            player.reorderPlaylist(fromPlaylist, toPlaylist)
+        }
+    }
 
     LaunchedEffect(Unit) { vm.loadIfNeeded() }
     LaunchedEffect(scrollToPlaylist, playerState.playlist.size) {
         if (scrollToPlaylist) {
-            listState.animateScrollToItem(playlistSectionIndex(uiState.creators.size))
+            listState.animateScrollToItem(playlistHeaderIndex)
             player.consumeScrollToPlaylist()
         }
+    }
+
+    // 在 Composable 作用域内计算完成状态
+    val completedIds = remember(playerState.playlist) {
+        playerState.playlist.mapNotNull { item ->
+            if (PlaybackProgressStore.shared.isCompleted(item.id)) item.id else null
+        }.toSet()
     }
 
     Scaffold(
@@ -103,60 +132,280 @@ fun HomeScreen(
                 .fillMaxSize()
                 .padding(padding)
         ) {
-            if (uiState.creators.isEmpty()) {
-                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    Text("暂无内容，请先同步", color = OhvColors.SecondaryText)
+            LazyColumn(
+                modifier = Modifier.fillMaxSize(),
+                state = listState,
+                contentPadding = PaddingValues(bottom = if (uiState.hasCurrentItem) 88.dp else 16.dp)
+            ) {
+                // ── Creator Sections ────────────────────────────────────────────────
+                items(uiState.creators, key = { it.id }) { creator ->
+                    CreatorSection(
+                        creator = creator,
+                        albums = uiState.albumsByCreator[creator.id] ?: emptyList(),
+                        onAlbumClick = onAlbumClick,
+                        onCreatorClick = onCreatorClick
+                    )
                 }
-            } else {
-                LazyColumn(
-                    modifier = Modifier.fillMaxSize(),
-                    state = listState,
-                    contentPadding = PaddingValues(bottom = if (uiState.hasCurrentItem) 88.dp else 16.dp)
-                ) {
-                    items(uiState.creators, key = { it.id }) { creator ->
-                        CreatorSection(
-                            creator = creator,
-                            albums = uiState.albumsByCreator[creator.id] ?: emptyList(),
-                            onAlbumClick = onAlbumClick,
-                            onCreatorClick = onCreatorClick
-                        )
-                    }
 
-                    if (uiState.creators.size > 3) {
-                        item(key = "all_creators_link") {
-                            TextButton(
-                                onClick = onAllCreatorsClick,
-                                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp)
-                            ) {
-                                Text("查看全部创作者", color = OhvColors.Accent, fontSize = 14.sp)
-                            }
+                // ── Empty state (when no creators) ─────────────────────────────────
+                if (uiState.creators.isEmpty()) {
+                    item {
+                        Box(
+                            modifier = Modifier.fillMaxWidth().padding(vertical = 40.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text("暂无内容，请先同步", color = OhvColors.SecondaryText)
                         }
                     }
+                }
 
-                    item(key = PLAYLIST_SECTION_KEY) {
-                        PlaylistSection(
-                            playlist = playerState.playlist,
-                            currentItemId = playerState.currentItem?.id,
-                            isLoading = playerState.isLoading,
-                            progressRatio = playerState.progressRatio,
-                            onPlayItem = { index ->
-                                val item = playerState.playlist.getOrNull(index)
-                                if (item?.id == playerState.currentItem?.id) {
-                                    onPlayerClick()
-                                } else {
-                                    player.playFromPlaylist(index)
+                // ── All creators link ──────────────────────────────────────────────
+                if (uiState.creators.size > 3) {
+                    item(key = "all_creators_link") {
+                        TextButton(
+                            onClick = onAllCreatorsClick,
+                            modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp)
+                        ) {
+                            Text("查看全部创作者", color = OhvColors.Accent, fontSize = 14.sp)
+                        }
+                    }
+                }
+
+                // ── Playlist Section ───────────────────────────────────────────────
+                item(key = PLAYLIST_SECTION_KEY) {
+                    PlaylistHeader(
+                        count = playerState.playlist.size,
+                        onClear = { player.clearAll() }
+                    )
+                }
+
+                if (playerState.playlist.isEmpty()) {
+                    item(key = "playlist_empty") {
+                        PlaylistEmptyState()
+                    }
+                } else {
+                    // 播放列表项 — 每个项都是一个独立的 ReorderableItem
+                    // 注意：ReorderableItem 的 content lambda 以 ReorderableCollectionItemScope 为 receiver，
+                    // 因此 Modifier.longPressDraggableHandle() 只能在此作用域内调用
+                    items(playerState.playlist, key = { it.id }) { item ->
+                        val idx = playerState.playlist.indexOf(item)
+
+                        ReorderableItem(reorderableState, key = item.id) { isDragging ->
+                            val handleModifier = Modifier.longPressDraggableHandle(
+                                onDragStarted = {
+                                    haptic.performHapticFeedback(HapticFeedbackType.GestureThresholdActivate)
+                                },
+                                onDragStopped = {
+                                    haptic.performHapticFeedback(HapticFeedbackType.GestureEnd)
                                 }
-                            },
-                            onReorder = { from, to -> player.reorderPlaylist(from, to) },
-                            onRemove = { index -> player.removeFromPlaylist(index) },
-                            onClear = { player.clearAll() }
-                        )
+                            )
+
+                            PlaylistRow(
+                                item = item,
+                                isCurrent = item.id == playerState.currentItem?.id,
+                                isCompleted = completedIds.contains(item.id),
+                                isLoading = playerState.isLoading && item.id == playerState.currentItem?.id,
+                                progressRatio = playerState.progressRatio,
+                                isDragging = isDragging,
+                                isLast = idx == playerState.playlist.lastIndex,
+                                onClick = {
+                                    if (item.id == playerState.currentItem?.id) {
+                                        onPlayerClick()
+                                    } else {
+                                        player.playFromPlaylist(idx)
+                                    }
+                                },
+                                dragHandleModifier = handleModifier
+                            )
+                        }
                     }
                 }
             }
         }
     }
 }
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// PlaylistRow — 纯渲染组件，通过 dragHandleModifier 接入 Calvin-LL/Reorderable
+// ═══════════════════════════════════════════════════════════════════════════════
+
+@Composable
+private fun PlaylistRow(
+    item: AudioItem,
+    isCurrent: Boolean,
+    isCompleted: Boolean,
+    isLoading: Boolean,
+    progressRatio: Float,
+    isDragging: Boolean,
+    isLast: Boolean,
+    onClick: () -> Unit,
+    dragHandleModifier: Modifier = Modifier
+) {
+    val dimmed = isCompleted && !isCurrent
+
+    Column {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp)
+                .clip(RoundedCornerShape(16.dp))
+                .background(OhvColors.CardBackground)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                // ── Content area (click → play / open player) ──
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .clickable(
+                            indication = null,
+                            interactionSource = remember { MutableInteractionSource() }
+                        ) { onClick() }
+                ) {
+                    // Current-item progress bar background
+                    if (isCurrent) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .matchParentSize()
+                        ) {
+                            Box(
+                                Modifier
+                                    .fillMaxHeight()
+                                    .weight(progressRatio.coerceIn(0.001f, 0.999f))
+                                    .background(OhvColors.Accent.copy(alpha = 0.12f))
+                            )
+                            Box(
+                                Modifier
+                                    .fillMaxHeight()
+                                    .weight((1f - progressRatio).coerceIn(0.001f, 0.999f))
+                                    .background(OhvColors.Accent.copy(alpha = 0.06f))
+                            )
+                        }
+                    }
+
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        // Accent bar
+                        Box(
+                            Modifier
+                                .width(3.dp).height(44.dp)
+                                .background(if (isCurrent) OhvColors.Accent else OhvColors.CardBackground)
+                        )
+                        Spacer(Modifier.width(12.dp))
+
+                        // Cover
+                        Box(
+                            Modifier
+                                .size(44.dp)
+                                .clip(RoundedCornerShape(6.dp))
+                                .background(OhvColors.Background)
+                                .alpha(if (dimmed) 0.4f else 1f),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            AsyncImage(
+                                model = item.coverUrl,
+                                contentDescription = item.title,
+                                modifier = Modifier.fillMaxSize()
+                            )
+                            if (isCurrent || dimmed) {
+                                Box(
+                                    Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.35f)),
+                                    contentAlignment = Alignment.Center
+                                ) {
+                                    when {
+                                        isCurrent && isLoading -> CircularProgressIndicator(
+                                            color = Color.White,
+                                            strokeWidth = 2.dp,
+                                            modifier = Modifier.size(18.dp)
+                                        )
+                                        isCurrent -> Icon(
+                                            Icons.Default.GraphicEq,
+                                            contentDescription = null,
+                                            tint = Color.White,
+                                            modifier = Modifier.size(18.dp)
+                                        )
+                                        dimmed -> Icon(
+                                            Icons.Default.CheckCircle,
+                                            contentDescription = "已完成",
+                                            tint = Color.White,
+                                            modifier = Modifier.size(18.dp)
+                                        )
+                                    }
+                                }
+                            }
+                        }
+
+                        Spacer(Modifier.width(12.dp))
+
+                        // Title + duration
+                        Column(
+                            Modifier.weight(1f),
+                            verticalArrangement = Arrangement.spacedBy(3.dp)
+                        ) {
+                            Text(
+                                text = item.title,
+                                color = when {
+                                    isCurrent -> OhvColors.Accent
+                                    dimmed -> OhvColors.SecondaryText
+                                    else -> OhvColors.White
+                                },
+                                fontSize = 14.sp,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                fontWeight = if (isCurrent) FontWeight.SemiBold else FontWeight.Normal
+                            )
+                            Text(
+                                text = item.duration.toMinutesOnly(),
+                                color = when {
+                                    isCurrent -> OhvColors.Accent.copy(alpha = 0.75f)
+                                    dimmed -> OhvColors.SecondaryText.copy(alpha = 0.6f)
+                                    else -> OhvColors.SecondaryText
+                                },
+                                fontSize = 12.sp
+                            )
+                        }
+                    }
+                }
+
+                Spacer(Modifier.width(12.dp))
+
+                // ── Drag handle (library handles long-press gesture) ──
+                Box(
+                    modifier = Modifier
+                        .size(48.dp)
+                        .background(
+                            OhvColors.Separator.copy(alpha = if (isDragging) 0.6f else 0.3f),
+                            RoundedCornerShape(8.dp)
+                        )
+                        .then(dragHandleModifier),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        Icons.Default.DragHandle,
+                        contentDescription = "拖拽排序",
+                        tint = OhvColors.SecondaryText.copy(alpha = if (dimmed) 0.3f else 0.6f),
+                        modifier = Modifier.size(24.dp)
+                    )
+                }
+
+                Spacer(Modifier.width(12.dp))
+            }
+        }
+
+        if (!isLast) {
+            Spacer(Modifier.height(6.dp))
+        }
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Other composables (unchanged)
+// ═══════════════════════════════════════════════════════════════════════════════
 
 @Composable
 private fun CreatorSection(
@@ -205,33 +454,17 @@ private fun CreatorSection(
     }
 }
 
-// ─── Playlist Section with drag-reorder + swipe-delete ────────────────────────
-
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun PlaylistSection(
-    playlist: List<AudioItem>,
-    currentItemId: String?,
-    isLoading: Boolean,
-    progressRatio: Float,
-    onPlayItem: (Int) -> Unit,
-    onReorder: (fromIndex: Int, toIndex: Int) -> Unit,
-    onRemove: (index: Int) -> Unit,
-    onClear: () -> Unit
-) {
-    var draggedIndex by remember { mutableIntStateOf(-1) }
-    var dragOffsetY by remember { mutableFloatStateOf(0f) }
-
+private fun PlaylistHeader(count: Int, onClear: () -> Unit) {
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(top = 8.dp, bottom = 24.dp),
-        verticalArrangement = Arrangement.spacedBy(10.dp)
+            .padding(top = 8.dp)
     ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 16.dp),
+                .padding(horizontal = 16.dp, vertical = 4.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             Text(
@@ -241,251 +474,38 @@ private fun PlaylistSection(
                 fontWeight = FontWeight.SemiBold,
                 modifier = Modifier.weight(1f)
             )
-            if (playlist.isNotEmpty()) {
+            if (count > 0) {
                 TextButton(onClick = onClear) {
                     Text("清空", color = OhvColors.SecondaryText)
-                }
-            }
-        }
-
-        if (playlist.isEmpty()) {
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 16.dp)
-                    .clip(RoundedCornerShape(16.dp))
-                    .background(OhvColors.CardBackground)
-                    .padding(vertical = 28.dp),
-                contentAlignment = Alignment.Center
-            ) {
-                Column(
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    Icon(
-                        Icons.Default.Waves,
-                        contentDescription = null,
-                        tint = OhvColors.SecondaryText.copy(alpha = 0.4f),
-                        modifier = Modifier.size(24.dp)
-                    )
-                    Text("在专辑页点击播放后会出现在这里", color = OhvColors.SecondaryText, fontSize = 12.sp)
-                }
-            }
-            return
-        }
-
-        Surface(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 16.dp),
-            color = OhvColors.CardBackground,
-            shape = RoundedCornerShape(16.dp)
-        ) {
-            Column {
-                playlist.forEachIndexed { index, item ->
-                    val isCurrent = item.id == currentItemId
-                    val isDragged = index == draggedIndex
-                    val elevation by animateDpAsState(
-                        targetValue = if (isDragged) 4.dp else 0.dp,
-                        label = "dragElevation"
-                    )
-
-                    val dismissState = rememberSwipeToDismissBoxState(
-                        confirmValueChange = { value ->
-                            if (value == SwipeToDismissBoxValue.EndToStart) {
-                                onRemove(index)
-                                true
-                            } else false
-                        },
-                        positionalThreshold = { totalDistance -> totalDistance * 0.4f }
-                    )
-
-                    SwipeToDismissBox(
-                        state = dismissState,
-                        enableDismissFromStartToEnd = false,
-                        backgroundContent = {
-                            val color = when (dismissState.targetValue) {
-                                SwipeToDismissBoxValue.EndToStart -> OhvColors.DestructiveRed
-                                else -> Color.Transparent
-                            }
-                            Box(
-                                modifier = Modifier
-                                    .fillMaxSize()
-                                    .background(color, RoundedCornerShape(16.dp))
-                                    .padding(end = 24.dp),
-                                contentAlignment = Alignment.CenterEnd
-                            ) {
-                                Icon(
-                                    Icons.Default.Delete,
-                                    contentDescription = "删除",
-                                    tint = Color.White
-                                )
-                            }
-                        }
-                    ) {
-                        PlaylistRow(
-                            item = item,
-                            index = index,
-                            isCurrent = isCurrent,
-                            isLoading = isLoading && isCurrent,
-                            progressRatio = if (isCurrent) progressRatio else 0f,
-                            isDragged = isDragged,
-                            onClick = { onPlayItem(index) },
-                            onDragStart = { draggedIndex = index },
-                            onDrag = { offset ->
-                                dragOffsetY = offset
-                                val targetIndex = computeTargetIndex(index, offset, 64f)
-                                if (targetIndex != index && targetIndex in playlist.indices) {
-                                    onReorder(index, targetIndex)
-                                    draggedIndex = targetIndex
-                                    dragOffsetY = 0f
-                                }
-                            },
-                            onDragEnd = {
-                                draggedIndex = -1
-                                dragOffsetY = 0f
-                            }
-                        )
-                    }
-
-                    if (index < playlist.lastIndex) {
-                        HorizontalDivider(
-                            color = OhvColors.Separator,
-                            modifier = Modifier.padding(start = 59.dp)
-                        )
-                    }
                 }
             }
         }
     }
 }
 
-private fun computeTargetIndex(currentIndex: Int, offsetY: Float, itemHeight: Float): Int {
-    val shift = (offsetY / itemHeight).toInt()
-    return currentIndex + shift
-}
-
 @Composable
-private fun PlaylistRow(
-    item: AudioItem,
-    index: Int,
-    isCurrent: Boolean,
-    isLoading: Boolean,
-    progressRatio: Float,
-    isDragged: Boolean,
-    onClick: () -> Unit,
-    onDragStart: () -> Unit,
-    onDrag: (Float) -> Unit,
-    onDragEnd: () -> Unit
-) {
-    Row(
+private fun PlaylistEmptyState() {
+    Box(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable(onClick = onClick)
-            .background(if (isCurrent) OhvColors.Accent.copy(alpha = 0.08f) else if (isDragged) OhvColors.Separator else OhvColors.CardBackground)
-            .padding(horizontal = 0.dp, vertical = 10.dp),
-        verticalAlignment = Alignment.CenterVertically
+            .padding(horizontal = 16.dp)
+            .clip(RoundedCornerShape(16.dp))
+            .background(OhvColors.CardBackground)
+            .padding(vertical = 28.dp),
+        contentAlignment = Alignment.Center
     ) {
-        Box(
-            modifier = Modifier
-                .width(3.dp)
-                .height(44.dp)
-                .background(if (isCurrent) OhvColors.Accent else OhvColors.CardBackground)
-        )
-        Spacer(modifier = Modifier.width(12.dp))
-
-        Box(
-            modifier = Modifier
-                .size(44.dp)
-                .clip(RoundedCornerShape(6.dp))
-                .background(OhvColors.Background),
-            contentAlignment = Alignment.Center
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            AsyncImage(
-                model = item.coverUrl,
-                contentDescription = item.title,
-                modifier = Modifier.fillMaxSize()
+            Icon(
+                Icons.Default.Waves,
+                contentDescription = null,
+                tint = OhvColors.SecondaryText.copy(alpha = 0.4f),
+                modifier = Modifier.size(24.dp)
             )
-            if (isCurrent) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .background(Color.Black.copy(alpha = 0.35f))
-                )
-                if (isLoading) {
-                    CircularProgressIndicator(
-                        color = Color.White,
-                        strokeWidth = 2.dp,
-                        modifier = Modifier.size(18.dp)
-                    )
-                } else {
-                    Icon(
-                        Icons.Default.GraphicEq,
-                        contentDescription = null,
-                        tint = Color.White,
-                        modifier = Modifier.size(18.dp)
-                    )
-                }
-            }
+            Text("在专辑页点击播放后会出现在这里", color = OhvColors.SecondaryText, fontSize = 12.sp)
         }
-
-        Spacer(modifier = Modifier.width(12.dp))
-
-        Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
-            Text(
-                text = item.title,
-                color = if (isCurrent) OhvColors.Accent else OhvColors.White,
-                fontSize = 14.sp,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-                fontWeight = if (isCurrent) FontWeight.SemiBold else FontWeight.Normal
-            )
-            Text(
-                text = item.duration.toMinutesOnly(),
-                color = if (isCurrent) OhvColors.Accent.copy(alpha = 0.75f) else OhvColors.SecondaryText,
-                fontSize = 12.sp
-            )
-            if (isCurrent) {
-                LinearProgressIndicator(
-                    progress = { progressRatio.coerceIn(0f, 1f) },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(top = 2.dp)
-                        .height(2.dp),
-                    color = OhvColors.Accent,
-                    trackColor = OhvColors.Separator
-                )
-            }
-        }
-
-        // Drag handle
-        Icon(
-            Icons.Default.DragHandle,
-            contentDescription = "拖拽排序",
-            tint = OhvColors.SecondaryText.copy(alpha = 0.6f),
-            modifier = Modifier
-                .size(24.dp)
-                .pointerInput(Unit) {
-                    detectDragGesturesAfterLongPress(
-                        onDragStart = { onDragStart() },
-                        onDrag = { change, dragAmount ->
-                            change.consume()
-                            onDrag(dragAmount.y)
-                        },
-                        onDragEnd = { onDragEnd() },
-                        onDragCancel = { onDragEnd() }
-                    )
-                }
-        )
-
-        Spacer(modifier = Modifier.width(8.dp))
-
-        Text(
-            text = if (index == 0) "当前" else "${index + 1}",
-            color = if (isCurrent) OhvColors.Accent else OhvColors.SecondaryText,
-            fontSize = 12.sp,
-            modifier = Modifier.padding(end = 12.dp)
-        )
     }
 }
 
@@ -523,11 +543,12 @@ private fun AlbumCard(
     }
 }
 
-private fun playlistSectionIndex(creatorCount: Int): Int = creatorCount
+// ── Duration formatting ──────────────────────────────────────────────────────
 
 private fun Double.toMinutesOnly(): String {
     val total = this.toFloat().roundToInt()
-    val m = total / 60
+    val h = total / 3600
+    val m = (total % 3600) / 60
     val s = total % 60
-    return "%d:%02d".format(m, s)
+    return if (h > 0) "%d:%02d:%02d".format(h, m, s) else "%d:%02d".format(m, s)
 }

@@ -204,19 +204,10 @@ struct HomeView: View {
                             .listRowSeparatorTint(Theme.Colors.divider)
                     }
                     .onMove { from, to in
-                        player.playlist.move(fromOffsets: from, toOffset: to)
-                        player.syncAfterReorder()
+                        player.moveItem(fromOffsets: from, toOffset: to)
                     }
                     .onDelete { indices in
-                        let cache = AudioCacheService.shared
-                        let deletingCurrent = indices.contains(where: {
-                            player.playlist[$0].id == player.currentItem?.id
-                        })
-                        for idx in indices {
-                            cache.removeCache(for: player.playlist[idx].id)
-                        }
-                        player.playlist.remove(atOffsets: indices)
-                        player.didRemoveItems(deletingCurrent: deletingCurrent)
+                        player.removeItems(atOffsets: indices)
                     }
                 }
                 .listStyle(.plain)
@@ -366,10 +357,7 @@ private struct PlaylistRowView: View {
                 showPlayer = true
                 return
             }
-            if index != 0 {
-                player.playlist.move(fromOffsets: IndexSet(integer: index), toOffset: 0)
-            }
-            player.play(playlist: player.playlist, startAt: 0)
+            player.playItemInPlaylist(at: index)
         }
     }
 }

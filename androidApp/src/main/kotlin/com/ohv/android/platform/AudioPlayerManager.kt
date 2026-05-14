@@ -80,9 +80,11 @@ class AudioPlayerManager private constructor(private val context: Context) {
     private val api = AfdianApiService(secureStorage)
     private val progressStore = PlaybackProgressStore.shared
     private val kvStore = KeyValueStore()
+    private val audioCache = AudioCacheService.shared
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
 
     private val _playlist = mutableListOf<AudioItem>()
+    private var pendingSeekMs: Long? = null
     private val _state = MutableStateFlow(
         PlayerState(
             playbackRate = kvStore.getFloat(PLAYBACK_RATE_KEY, 1.0f).takeIf { it > 0f } ?: 1.0f,
@@ -105,7 +107,6 @@ class AudioPlayerManager private constructor(private val context: Context) {
         try {
             val items = json.decodeFromString<List<AudioItem>>(data)
             if (items.isNotEmpty()) {
-                _playlist.clear()
                 _playlist.addAll(items)
                 _state.value = _state.value.copy(
                     currentItem = items[0],
@@ -171,6 +172,15 @@ class AudioPlayerManager private constructor(private val context: Context) {
                 Player.STATE_READY -> {
                     val duration = controller?.duration?.takeIf { it > 0 } ?: 0L
                     _state.value = _state.value.copy(durationMs = duration, isLoading = false)
+                    pendingSeekMs?.let { ms ->
+                        controller?.seekTo(ms)
+                        pendingSeekMs = null
+                        controller?.playWhenReady = true
+                        val item = _state.value.currentItem
+                        if (item != null) {
+                            progressStore.setLastPlayed(item.id, item.creatorId)
+                        }
+                    }
                 }
                 Player.STATE_BUFFERING -> {
                     _state.value = _state.value.copy(isLoading = true)
@@ -250,10 +260,22 @@ class AudioPlayerManager private constructor(private val context: Context) {
     private suspend fun loadAndPlay(item: AudioItem) {
         _state.value = _state.value.copy(isLoading = true, currentItem = item)
         try {
-            val url = item.audioUrl ?: run {
-                val fetched = api.fetchAudioUrl(item.id)
-                item.audioUrl = fetched
-                fetched
+            // 优先使用本地缓存
+            val cachedFile = audioCache.cachedFile(item.id)
+            val playUrl: String
+            if (cachedFile != null) {
+                playUrl = cachedFile.toURI().toString()
+            } else {
+                val remoteUrl = item.audioUrl ?: run {
+                    val fetched = api.fetchAudioUrl(item.id)
+                    item.audioUrl = fetched
+                    fetched
+                }
+                playUrl = remoteUrl
+                // 后台缓存，不阻塞播放
+                scope.launch(Dispatchers.IO) {
+                    audioCache.cacheAudio(remoteUrl, item.id)
+                }
             }
 
             val ctrl = controller ?: run {
@@ -263,7 +285,7 @@ class AudioPlayerManager private constructor(private val context: Context) {
             } ?: return
 
             val mediaItem = MediaItem.Builder()
-                .setUri(url)
+                .setUri(playUrl)
                 .setMediaId(item.id)
                 .setMediaMetadata(
                     MediaMetadata.Builder()
@@ -274,16 +296,17 @@ class AudioPlayerManager private constructor(private val context: Context) {
                 .build()
 
             ctrl.setMediaItem(mediaItem)
+
+            val savedProgress = progressStore.progress(item.id)
+            val needSeek = savedProgress > 5.0
+            pendingSeekMs = if (needSeek) (savedProgress * 1000).toLong() else null
+            ctrl.playWhenReady = !needSeek
             ctrl.prepare()
             ctrl.setPlaybackSpeed(playbackRate)
 
-            val savedProgress = progressStore.progress(item.id)
-            if (savedProgress > 5.0) {
-                ctrl.seekTo((savedProgress * 1000).toLong())
+            if (!needSeek) {
+                progressStore.setLastPlayed(item.id, item.creatorId)
             }
-
-            ctrl.play()
-            progressStore.setLastPlayed(item.id, item.creatorId)
 
             _state.value = _state.value.copy(
                 currentItem = item,
@@ -305,12 +328,11 @@ class AudioPlayerManager private constructor(private val context: Context) {
     }
 
     fun appendAndPlay(items: List<AudioItem>) {
-        _playlist.clear()
-        _playlist.addAll(items)
+        if (items.isEmpty()) return
+        val newItems = items.filter { item -> _playlist.none { it.id == item.id } }
+        _playlist.addAll(newItems)
         persistPlaylist()
-        if (_playlist.isNotEmpty()) {
-            scope.launch { loadAndPlay(_playlist[0]) }
-        }
+        playImmediately(items[0])
     }
 
     fun appendToPlaylist(item: AudioItem) {
@@ -326,36 +348,8 @@ class AudioPlayerManager private constructor(private val context: Context) {
         if (fromIndex == toIndex) return
         val item = _playlist.removeAt(fromIndex)
         _playlist.add(toIndex, item)
-        syncAfterReorder()
         _state.value = _state.value.copy(playlist = _playlist.toList())
         persistPlaylist()
-    }
-
-    fun removeFromPlaylist(index: Int) {
-        if (index !in _playlist.indices) return
-        val wasCurrent = index == 0
-        _playlist.removeAt(index)
-        if (_playlist.isEmpty()) {
-            persistPlaylist()
-            clearAll()
-            return
-        }
-        if (wasCurrent) {
-            persistPlaylist()
-            scope.launch { loadAndPlay(_playlist[0]) }
-        } else {
-            _state.value = _state.value.copy(playlist = _playlist.toList())
-            persistPlaylist()
-        }
-    }
-
-    private fun syncAfterReorder() {
-        val current = _state.value.currentItem ?: return
-        val idx = _playlist.indexOfFirst { it.id == current.id }
-        if (idx > 0) {
-            val item = _playlist.removeAt(idx)
-            _playlist.add(0, item)
-        }
     }
 
     fun playFromPlaylist(index: Int) {
@@ -392,7 +386,9 @@ class AudioPlayerManager private constructor(private val context: Context) {
     }
 
     fun playPrevious() {
-        controller?.seekTo(0)
+        if (_state.value.currentTimeSec > 5.0) {
+            controller?.seekTo(0)
+        }
     }
 
     fun skipForward(seconds: Int = 30) {
@@ -439,6 +435,10 @@ class AudioPlayerManager private constructor(private val context: Context) {
     }
 
     fun clearAll() {
+        val currentItem = _state.value.currentItem
+        if (currentItem != null && _state.value.currentTimeMs > 0) {
+            progressStore.setProgress(_state.value.currentTimeSec, currentItem.id)
+        }
         controller?.stop()
         controller?.clearMediaItems()
         _playlist.clear()

@@ -42,6 +42,7 @@ final class AudioPlayerService: @unchecked Sendable {
     private var playerItem: AVPlayerItem?
     private var timeObserver: Any?
     private var statusObserver: NSKeyValueObservation?
+    private var progressSaveCounter: Int = 0
 
     // MARK: - 播放状态（UI 观察这些属性）
 
@@ -67,7 +68,6 @@ final class AudioPlayerService: @unchecked Sendable {
 
     // MARK: - 睡眠定时
 
-    private var sleepTimer: Timer?
     private(set) var sleepRemainingSeconds: Int = 0
 
     enum SleepDuration: Int, CaseIterable {
@@ -100,15 +100,10 @@ final class AudioPlayerService: @unchecked Sendable {
               let items = try? JSONDecoder().decode([AudioItem].self, from: data),
               !items.isEmpty else { return }
         playlist = items
-        // 有本地缓存时直接恢复 AVPlayer 并自动续播，否则只恢复状态等用户点击
-        if audioCache.cachedURL(for: items[0].id) != nil {
-            loadAndPlay(item: items[0])
-        } else {
-            currentItem = items[0]
-            duration = items[0].duration
-            let saved = progressStore.progress(for: items[0].id)
-            if saved > 0 { currentTime = saved }
-        }
+        currentItem = items[0]
+        duration = items[0].duration
+        let saved = progressStore.progress(for: items[0].id)
+        if saved > 0 { currentTime = saved }
     }
 
     // MARK: - 便利计算属性
@@ -149,9 +144,7 @@ final class AudioPlayerService: @unchecked Sendable {
     }
 
     func play(item: AudioItem) {
-        playlist.removeAll { $0.id == item.id }
-        playlist.insert(item, at: 0)
-        loadAndPlay(item: item)
+        playImmediately(item)
     }
 
     func playImmediately(_ item: AudioItem) {
@@ -251,30 +244,60 @@ final class AudioPlayerService: @unchecked Sendable {
         }
     }
 
-    // MARK: - 睡眠定时
-
-    func setSleepTimer(_ duration: SleepDuration) {
-        sleepTimer?.invalidate()
-        sleepTimer = nil
-        sleepRemainingSeconds = 0
-        guard duration != .off else { return }
-        sleepRemainingSeconds = duration.rawValue * 60
-        sleepTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
-            guard let self else { return }
-            if self.sleepRemainingSeconds > 0 {
-                self.sleepRemainingSeconds -= 1
-            } else {
-                self.pause()
-                self.sleepTimer?.invalidate()
-                self.sleepTimer = nil
-            }
+    func moveItem(fromOffsets source: IndexSet, toOffset destination: Int) {
+        playlist.move(fromOffsets: source, toOffset: destination)
+        if destination == 0, let firstItem = playlist.first {
+            play(playlist: playlist, startAt: 0)
+        } else {
+            syncAfterReorder()
         }
     }
 
-    func cancelSleepTimer() {
-        sleepTimer?.invalidate()
-        sleepTimer = nil
+    func removeItems(atOffsets offsets: IndexSet) {
+        let deletingCurrent = offsets.contains(where: { playlist[$0].id == currentItem?.id })
+        playlist.remove(atOffsets: offsets)
+        didRemoveItems(deletingCurrent: deletingCurrent)
+    }
+
+    func playItemInPlaylist(at index: Int) {
+        if index != 0 {
+            playlist.move(fromOffsets: IndexSet(integer: index), toOffset: 0)
+        }
+        play(playlist: playlist, startAt: 0)
+    }
+
+    // MARK: - 睡眠定时
+
+    private var sleepEndTime: Date?
+
+    func setSleepTimer(_ duration: SleepDuration) {
+        sleepEndTime = nil
         sleepRemainingSeconds = 0
+        guard duration != .off else { return }
+        sleepEndTime = Date().addingTimeInterval(TimeInterval(duration.rawValue * 60))
+        sleepRemainingSeconds = duration.rawValue * 60
+        startSleepCountdown()
+    }
+
+    func cancelSleepTimer() {
+        sleepEndTime = nil
+        sleepRemainingSeconds = 0
+    }
+
+    private func startSleepCountdown() {
+        guard sleepEndTime != nil else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
+            guard let self, let end = self.sleepEndTime else { return }
+            let remaining = Int(end.timeIntervalSinceNow)
+            if remaining <= 0 {
+                self.pause()
+                self.sleepEndTime = nil
+                self.sleepRemainingSeconds = 0
+            } else {
+                self.sleepRemainingSeconds = remaining
+                self.startSleepCountdown()
+            }
+        }
     }
 
     // MARK: - 私有：加载并播放
@@ -367,13 +390,18 @@ final class AudioPlayerService: @unchecked Sendable {
             }
         }
 
+        progressSaveCounter = 0
         timeObserver = player?.addPeriodicTimeObserver(
             forInterval: CMTime(seconds: 0.5, preferredTimescale: 600),
             queue: .main
         ) { [weak self] time in
             guard let self, self.isPlaying else { return }
             self.currentTime = time.seconds
-            if Int(time.seconds) % 15 == 0 { self.saveCurrentProgress() }
+            self.progressSaveCounter += 1
+            if self.progressSaveCounter >= 30 { // ~15 seconds (30 × 0.5s)
+                self.saveCurrentProgress()
+                self.progressSaveCounter = 0
+            }
             NowPlayingService.shared.updateProgress(current: time.seconds, duration: self.duration)
         }
 
@@ -396,7 +424,6 @@ final class AudioPlayerService: @unchecked Sendable {
         if let id = currentItem?.id {
             progressStore.markCompleted(for: id)
             playlist.removeAll { $0.id == id }
-            audioCache.removeCache(for: id)
         }
         if !playlist.isEmpty {
             loadAndPlay(item: playlist[0])
