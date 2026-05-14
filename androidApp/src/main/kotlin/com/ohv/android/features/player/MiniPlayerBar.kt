@@ -5,6 +5,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.FormatListBulleted
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.SkipNext
@@ -27,17 +28,19 @@ import com.ohv.android.platform.AudioPlayerManager
 import com.ohv.android.theme.OhvColors
 
 /**
- * 迷你播放器底部悬浮条（对应 iOS MiniPlayerBar.swift）
+ * 迷你播放器底部悬浮条（对应 iOS MiniPlayerView）
  *
  * 仅在有正在播放的内容时显示（currentItem != null）。
  * 点击整体区域 → 打开全屏 PlayerScreen。
  * 播放/暂停按钮和下一首按钮直接控制 AudioPlayerManager。
  *
  * @param onExpand 点击展开全屏播放器
+ * @param onShowPlaylist 点击队列按钮 → 回首页并滚动到播放列表
  */
 @Composable
 fun MiniPlayerBar(
     onExpand: () -> Unit,
+    onShowPlaylist: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val player = AudioPlayerManager.shared
@@ -129,6 +132,19 @@ fun MiniPlayerBar(
                     contentDescription = "下一首",
                     tint = OhvColors.White,
                     modifier = Modifier.size(24.dp)
+                )
+            }
+
+            // 播放队列 → 回首页并滚动到播放列表
+            IconButton(
+                onClick = onShowPlaylist,
+                modifier = Modifier.size(40.dp)
+            ) {
+                Icon(
+                    Icons.AutoMirrored.Filled.FormatListBulleted,
+                    contentDescription = "播放队列",
+                    tint = OhvColors.SecondaryText,
+                    modifier = Modifier.size(20.dp)
                 )
             }
         }

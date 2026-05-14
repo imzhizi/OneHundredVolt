@@ -10,16 +10,21 @@ import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.CheckCircle
-import androidx.compose.material.icons.filled.DragHandle
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Menu
 import androidx.compose.material.icons.filled.GraphicEq
+import androidx.compose.material.icons.filled.Pause
+import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Waves
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
@@ -99,6 +104,17 @@ fun HomeScreen(
         }.toSet()
     }
 
+    // 拖拽结束检测：用库的 isAnyItemDragging (derivedStateOf) 作为唯一信号，
+    // 比 per-item isDragging callback 更可靠，不受 LazyColumn 重组时序影响
+    var draggingItemId by remember { mutableStateOf<String?>(null) }
+    val isAnyDragging = reorderableState.isAnyItemDragging
+    LaunchedEffect(isAnyDragging) {
+        if (!isAnyDragging && draggingItemId != null) {
+            player.onReorderFinished()
+            draggingItemId = null
+        }
+    }
+
     Scaffold(
         containerColor = OhvColors.Background,
         topBar = {
@@ -123,7 +139,10 @@ fun HomeScreen(
         },
         bottomBar = {
             if (uiState.hasCurrentItem) {
-                MiniPlayerBar(onExpand = onPlayerClick)
+                MiniPlayerBar(
+                    onExpand = onPlayerClick,
+                    onShowPlaylist = { player.requestScrollToPlaylist() }
+                )
             }
         }
     ) { padding ->
@@ -191,6 +210,10 @@ fun HomeScreen(
                         val idx = playerState.playlist.indexOf(item)
 
                         ReorderableItem(reorderableState, key = item.id) { isDragging ->
+                            if (isDragging) {
+                                draggingItemId = item.id
+                            }
+
                             val handleModifier = Modifier.longPressDraggableHandle(
                                 onDragStarted = {
                                     haptic.performHapticFeedback(HapticFeedbackType.GestureThresholdActivate)
@@ -200,21 +223,26 @@ fun HomeScreen(
                                 }
                             )
 
+                            val isCurrent = item.id == playerState.currentItem?.id
+                            val isActivelyPlaying = isCurrent && (playerState.isPlaying || playerState.isLoading)
+
                             PlaylistRow(
                                 item = item,
-                                isCurrent = item.id == playerState.currentItem?.id,
+                                isCurrent = isCurrent,
+                                isPlaying = playerState.isPlaying,
                                 isCompleted = completedIds.contains(item.id),
-                                isLoading = playerState.isLoading && item.id == playerState.currentItem?.id,
+                                isLoading = playerState.isLoading && isCurrent,
                                 progressRatio = playerState.progressRatio,
                                 isDragging = isDragging,
                                 isLast = idx == playerState.playlist.lastIndex,
                                 onClick = {
-                                    if (item.id == playerState.currentItem?.id) {
+                                    if (isActivelyPlaying) {
                                         onPlayerClick()
                                     } else {
                                         player.playFromPlaylist(idx)
                                     }
                                 },
+                                onDismiss = { player.removeFromPlaylist(idx) },
                                 dragHandleModifier = handleModifier
                             )
                         }
@@ -229,171 +257,209 @@ fun HomeScreen(
 // PlaylistRow — 纯渲染组件，通过 dragHandleModifier 接入 Calvin-LL/Reorderable
 // ═══════════════════════════════════════════════════════════════════════════════
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun PlaylistRow(
     item: AudioItem,
     isCurrent: Boolean,
+    isPlaying: Boolean,
     isCompleted: Boolean,
     isLoading: Boolean,
     progressRatio: Float,
     isDragging: Boolean,
     isLast: Boolean,
     onClick: () -> Unit,
+    onDismiss: () -> Unit,
     dragHandleModifier: Modifier = Modifier
 ) {
     val dimmed = isCompleted && !isCurrent
+    val haptic = LocalHapticFeedback.current
+
+    val dismissState = rememberSwipeToDismissBoxState(
+        confirmValueChange = { value ->
+            if (value == SwipeToDismissBoxValue.EndToStart) {
+                onDismiss()
+                true
+            } else {
+                false
+            }
+        }
+    )
+
+    // 横滑跨越删除阈值时触发震动
+    LaunchedEffect(dismissState.targetValue) {
+        if (dismissState.targetValue != SwipeToDismissBoxValue.Settled) {
+            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+        }
+    }
 
     Column {
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 16.dp)
-                .clip(RoundedCornerShape(16.dp))
-                .background(OhvColors.CardBackground)
-        ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                // ── Content area (click → play / open player) ──
+        SwipeToDismissBox(
+            state = dismissState,
+            enableDismissFromStartToEnd = false,
+            enableDismissFromEndToStart = true,
+            backgroundContent = {
                 Box(
                     modifier = Modifier
-                        .weight(1f)
-                        .clickable(
-                            indication = null,
-                            interactionSource = remember { MutableInteractionSource() }
-                        ) { onClick() }
+                        .fillMaxSize()
+                        .padding(horizontal = 16.dp)
+                        .clip(RoundedCornerShape(16.dp))
+                        .background(OhvColors.Accent.copy(alpha = 0.15f)),
+                    contentAlignment = Alignment.CenterEnd
                 ) {
-                    // Current-item progress bar background
-                    if (isCurrent) {
-                        Row(
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .matchParentSize()
-                        ) {
-                            Box(
-                                Modifier
-                                    .fillMaxHeight()
-                                    .weight(progressRatio.coerceIn(0.001f, 0.999f))
-                                    .background(OhvColors.Accent.copy(alpha = 0.12f))
-                            )
-                            Box(
-                                Modifier
-                                    .fillMaxHeight()
-                                    .weight((1f - progressRatio).coerceIn(0.001f, 0.999f))
-                                    .background(OhvColors.Accent.copy(alpha = 0.06f))
-                            )
-                        }
-                    }
-
-                    Row(
-                        modifier = Modifier.fillMaxWidth().padding(vertical = 10.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        // Accent bar
+                    Icon(
+                        Icons.Default.Delete,
+                        contentDescription = "删除",
+                        tint = OhvColors.Accent,
+                        modifier = Modifier.padding(end = 24.dp)
+                    )
+                }
+            }
+        ) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp)
+                    .clip(RoundedCornerShape(16.dp))
+                    .background(OhvColors.CardBackground)
+            ) {
+                // Progress overlay for current item — spans full card width
+                if (isCurrent) {
+                    Row(Modifier.matchParentSize()) {
                         Box(
                             Modifier
-                                .width(3.dp).height(44.dp)
-                                .background(if (isCurrent) OhvColors.Accent else OhvColors.CardBackground)
+                                .fillMaxHeight()
+                                .weight(progressRatio.coerceIn(0.001f, 0.999f))
+                                .background(OhvColors.Accent.copy(alpha = 0.12f))
                         )
-                        Spacer(Modifier.width(12.dp))
-
-                        // Cover
                         Box(
                             Modifier
-                                .size(44.dp)
-                                .clip(RoundedCornerShape(6.dp))
-                                .background(OhvColors.Background)
-                                .alpha(if (dimmed) 0.4f else 1f),
-                            contentAlignment = Alignment.Center
+                                .fillMaxHeight()
+                                .weight((1f - progressRatio).coerceIn(0.001f, 0.999f))
+                                .background(OhvColors.Accent.copy(alpha = 0.06f))
+                        )
+                    }
+                }
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    // ── Content area (click → play / open player) ──
+                    Box(
+                        modifier = Modifier
+                            .weight(1f)
+                            .clickable(
+                                indication = null,
+                                interactionSource = remember { MutableInteractionSource() }
+                            ) { onClick() }
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically
                         ) {
-                            AsyncImage(
-                                model = item.coverUrl,
-                                contentDescription = item.title,
-                                modifier = Modifier.fillMaxSize()
+                            // Accent bar
+                            Box(
+                                Modifier
+                                    .width(3.dp).height(44.dp)
+                                    .background(if (isCurrent) OhvColors.Accent else OhvColors.CardBackground)
                             )
-                            if (isCurrent || dimmed) {
-                                Box(
-                                    Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.35f)),
-                                    contentAlignment = Alignment.Center
-                                ) {
-                                    when {
-                                        isCurrent && isLoading -> CircularProgressIndicator(
-                                            color = Color.White,
-                                            strokeWidth = 2.dp,
-                                            modifier = Modifier.size(18.dp)
-                                        )
-                                        isCurrent -> Icon(
-                                            Icons.Default.GraphicEq,
-                                            contentDescription = null,
-                                            tint = Color.White,
-                                            modifier = Modifier.size(18.dp)
-                                        )
-                                        dimmed -> Icon(
-                                            Icons.Default.CheckCircle,
-                                            contentDescription = "已完成",
-                                            tint = Color.White,
-                                            modifier = Modifier.size(18.dp)
-                                        )
+                            Spacer(Modifier.width(12.dp))
+
+                            // Cover
+                            Box(
+                                Modifier
+                                    .size(44.dp)
+                                    .clip(RoundedCornerShape(6.dp))
+                                    .background(OhvColors.Background)
+                                    .alpha(if (dimmed) 0.4f else 1f),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                AsyncImage(
+                                    model = item.coverUrl,
+                                    contentDescription = item.title,
+                                    modifier = Modifier.fillMaxSize()
+                                )
+                                if (isCurrent || dimmed) {
+                                    Box(
+                                        Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.35f)),
+                                        contentAlignment = Alignment.Center
+                                    ) {
+                                        when {
+                                            isCurrent && isLoading -> CircularProgressIndicator(
+                                                color = Color.White,
+                                                strokeWidth = 2.dp,
+                                                modifier = Modifier.size(18.dp)
+                                            )
+                                            isCurrent && isPlaying -> Icon(
+                                                Icons.Default.GraphicEq,
+                                                contentDescription = null,
+                                                tint = Color.White,
+                                                modifier = Modifier.size(18.dp)
+                                            )
+                                            isCurrent -> Icon(
+                                                Icons.Default.PlayArrow,
+                                                contentDescription = null,
+                                                tint = Color.White,
+                                                modifier = Modifier.size(18.dp)
+                                            )
+                                            dimmed -> Icon(
+                                                Icons.Default.Check,
+                                                contentDescription = "已完成",
+                                                tint = Color.White,
+                                                modifier = Modifier.size(18.dp)
+                                            )
+                                        }
                                     }
                                 }
                             }
-                        }
 
-                        Spacer(Modifier.width(12.dp))
+                            Spacer(Modifier.width(12.dp))
 
-                        // Title + duration
-                        Column(
-                            Modifier.weight(1f),
-                            verticalArrangement = Arrangement.spacedBy(3.dp)
-                        ) {
-                            Text(
-                                text = item.title,
-                                color = when {
-                                    isCurrent -> OhvColors.Accent
-                                    dimmed -> OhvColors.SecondaryText
-                                    else -> OhvColors.White
-                                },
-                                fontSize = 14.sp,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                                fontWeight = if (isCurrent) FontWeight.SemiBold else FontWeight.Normal
-                            )
-                            Text(
-                                text = item.duration.toMinutesOnly(),
-                                color = when {
-                                    isCurrent -> OhvColors.Accent.copy(alpha = 0.75f)
-                                    dimmed -> OhvColors.SecondaryText.copy(alpha = 0.6f)
-                                    else -> OhvColors.SecondaryText
-                                },
-                                fontSize = 12.sp
-                            )
+                            // Title + duration
+                            Column(
+                                Modifier.weight(1f),
+                                verticalArrangement = Arrangement.spacedBy(2.dp)
+                            ) {
+                                Text(
+                                    text = item.title,
+                                    color = when {
+                                        isCurrent -> OhvColors.Accent
+                                        dimmed -> OhvColors.SecondaryText
+                                        else -> OhvColors.White
+                                    },
+                                    fontSize = 14.sp,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    fontWeight = if (isCurrent) FontWeight.SemiBold else FontWeight.Normal
+                                )
+                                Text(
+                                    text = item.duration.toMinutesOnly(),
+                                    color = when {
+                                        isCurrent -> OhvColors.Accent.copy(alpha = 0.75f)
+                                        dimmed -> OhvColors.SecondaryText.copy(alpha = 0.6f)
+                                        else -> OhvColors.SecondaryText
+                                    },
+                                    fontSize = 12.sp
+                                )
+                            }
                         }
                     }
-                }
 
-                Spacer(Modifier.width(12.dp))
+                    Spacer(Modifier.width(12.dp))
 
-                // ── Drag handle (library handles long-press gesture) ──
-                Box(
-                    modifier = Modifier
-                        .size(48.dp)
-                        .background(
-                            OhvColors.Separator.copy(alpha = if (isDragging) 0.6f else 0.3f),
-                            RoundedCornerShape(8.dp)
-                        )
-                        .then(dragHandleModifier),
-                    contentAlignment = Alignment.Center
-                ) {
+                    // ── Drag handle (library handles long-press gesture) ──
                     Icon(
-                        Icons.Default.DragHandle,
+                        Icons.Default.Menu,
                         contentDescription = "拖拽排序",
                         tint = OhvColors.SecondaryText.copy(alpha = if (dimmed) 0.3f else 0.6f),
-                        modifier = Modifier.size(24.dp)
+                        modifier = Modifier
+                            .size(36.dp)
+                            .then(dragHandleModifier)
                     )
-                }
 
-                Spacer(Modifier.width(12.dp))
+                    Spacer(Modifier.width(12.dp))
+                }
             }
         }
 

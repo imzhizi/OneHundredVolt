@@ -119,6 +119,9 @@ class AudioPlayerManager private constructor(private val context: Context) {
     private val _scrollToPlaylist = MutableStateFlow(false)
     val scrollToPlaylist: StateFlow<Boolean> = _scrollToPlaylist.asStateFlow()
 
+    private val _queueFinished = MutableStateFlow(false)
+    val queueFinished: StateFlow<Boolean> = _queueFinished.asStateFlow()
+
     val playbackRate: Float get() = _state.value.playbackRate
     val loudnessBoostEnabled: Boolean get() = _state.value.loudnessBoostEnabled
 
@@ -144,6 +147,10 @@ class AudioPlayerManager private constructor(private val context: Context) {
                 controller?.addListener(playerListener)
                 controller?.setPlaybackSpeed(playbackRate)
                 syncStateFromController()
+                // 恢复播放列表后，如果 ExoPlayer 没有媒体项，加载第一集但不自动播放
+                if (_playlist.isNotEmpty() && controller?.currentMediaItem == null) {
+                    scope.launch { loadMediaForRestore(_playlist[0]) }
+                }
                 startProgressPolling()
             } catch (_: Exception) {
             }
@@ -243,7 +250,11 @@ class AudioPlayerManager private constructor(private val context: Context) {
     }
 
     private fun advanceToNext() {
-        if (_playlist.isNotEmpty()) _playlist.removeAt(0)
+        if (_playlist.isNotEmpty()) {
+            val finished = _playlist.first()
+            audioCache.removeCache(finished.id)
+            _playlist.removeAt(0)
+        }
         if (_playlist.isEmpty()) {
             persistPlaylist()
             _state.value = PlayerState(
@@ -251,6 +262,7 @@ class AudioPlayerManager private constructor(private val context: Context) {
                 loudnessBoostEnabled = loudnessBoostEnabled
             )
             stopProgressPolling()
+            _queueFinished.value = true
             return
         }
         persistPlaylist()
@@ -319,6 +331,62 @@ class AudioPlayerManager private constructor(private val context: Context) {
         }
     }
 
+    /**
+     * 恢复播放列表时加载媒体到 ExoPlayer，但不自动播放。
+     * 与 loadAndPlay 的区别：始终 playWhenReady = false，等待用户主动点击播放。
+     */
+    private suspend fun loadMediaForRestore(item: AudioItem) {
+        _state.value = _state.value.copy(isLoading = true, currentItem = item)
+        try {
+            val cachedFile = audioCache.cachedFile(item.id)
+            val playUrl: String
+            if (cachedFile != null) {
+                playUrl = cachedFile.toURI().toString()
+            } else {
+                val remoteUrl = item.audioUrl ?: run {
+                    val fetched = api.fetchAudioUrl(item.id)
+                    item.audioUrl = fetched
+                    fetched
+                }
+                playUrl = remoteUrl
+                scope.launch(Dispatchers.IO) {
+                    audioCache.cacheAudio(remoteUrl, item.id)
+                }
+            }
+
+            val ctrl = controller ?: return
+
+            val mediaItem = MediaItem.Builder()
+                .setUri(playUrl)
+                .setMediaId(item.id)
+                .setMediaMetadata(
+                    MediaMetadata.Builder()
+                        .setTitle(item.title)
+                        .setArtworkUri(item.coverUrl?.let(android.net.Uri::parse))
+                        .build()
+                )
+                .build()
+
+            ctrl.setMediaItem(mediaItem)
+
+            val savedProgress = progressStore.progress(item.id)
+            if (savedProgress > 5.0) {
+                ctrl.seekTo((savedProgress * 1000).toLong())
+            }
+            ctrl.playWhenReady = false
+            ctrl.prepare()
+            ctrl.setPlaybackSpeed(playbackRate)
+
+            _state.value = _state.value.copy(
+                currentItem = item,
+                playlist = _playlist.toList(),
+                isLoading = false
+            )
+        } catch (_: Exception) {
+            _state.value = _state.value.copy(isLoading = false)
+        }
+    }
+
     fun playImmediately(item: AudioItem) {
         _playlist.removeAll { it.id == item.id }
         _playlist.add(0, item)
@@ -350,6 +418,49 @@ class AudioPlayerManager private constructor(private val context: Context) {
         _playlist.add(toIndex, item)
         _state.value = _state.value.copy(playlist = _playlist.toList())
         persistPlaylist()
+        // 拖拽过程中仅做视觉重排，不触发播放切换。
+        // 播放逻辑统一在拖拽结束后由 onReorderFinished() 处理。
+    }
+
+    /**
+     * 拖拽排序结束后调用，根据最终位置决定是否需要切换播放。
+     * - 当前项仍在新队首 → syncAfterReorder（确保 playlist 与 state 一致）
+     * - 当前项被移走 → 播放新的 playlist[0]
+     */
+    fun onReorderFinished() {
+        val current = _state.value.currentItem ?: return
+        val idx = _playlist.indexOfFirst { it.id == current.id }
+        if (idx == 0) {
+            syncAfterReorder()
+        } else if (idx > 0) {
+            scope.launch { loadAndPlay(_playlist[0]) }
+        }
+    }
+
+    fun removeFromPlaylist(index: Int) {
+        if (index !in _playlist.indices) return
+        val deletingCurrent = _playlist[index].id == _state.value.currentItem?.id
+        audioCache.removeCache(_playlist[index].id)
+        _playlist.removeAt(index)
+        if (_playlist.isEmpty()) {
+            clearAll()
+        } else if (deletingCurrent) {
+            persistPlaylist()
+            scope.launch { loadAndPlay(_playlist[0]) }
+        } else {
+            _state.value = _state.value.copy(playlist = _playlist.toList())
+            persistPlaylist()
+        }
+    }
+
+    private fun syncAfterReorder() {
+        val current = _state.value.currentItem ?: return
+        val idx = _playlist.indexOfFirst { it.id == current.id }
+        if (idx > 0) {
+            val item = _playlist.removeAt(idx)
+            _playlist.add(0, item)
+        }
+        _state.value = _state.value.copy(playlist = _playlist.toList())
     }
 
     fun playFromPlaylist(index: Int) {
@@ -366,6 +477,10 @@ class AudioPlayerManager private constructor(private val context: Context) {
 
     fun consumeScrollToPlaylist() {
         _scrollToPlaylist.value = false
+    }
+
+    fun consumeQueueFinished() {
+        _queueFinished.value = false
     }
 
     fun togglePlayPause() {

@@ -238,7 +238,7 @@ struct AlbumDetailView: View {
                         .foregroundColor(.white)
                         .symbolEffect(.variableColor.iterative)
                 } else if isCurrent && !player.isPlaying {
-                    Image(systemName: "pause.fill")
+                    Image(systemName: "play.fill")
                         .font(.system(size: 14, weight: .medium))
                         .foregroundColor(.white)
                 } else if dimmed {

@@ -136,7 +136,11 @@ fun AppNavHost(
             AlbumDetailScreen(
                 albumId = albumId,
                 onBack = { navController.popBackStack() },
-                onPlayerClick = { navController.navigate(Screen.Player.route) }
+                onPlayerClick = { navController.navigate(Screen.Player.route) },
+                onShowPlaylist = {
+                    navController.popBackStack(Screen.Home.route, inclusive = false)
+                    AudioPlayerManager.shared.requestScrollToPlaylist()
+                }
             )
         }
 

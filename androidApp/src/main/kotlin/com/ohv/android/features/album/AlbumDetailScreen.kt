@@ -9,7 +9,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.AddCircle
 import androidx.compose.material.icons.filled.CheckCircle
-import androidx.compose.material.icons.filled.CheckCircleOutline
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.filled.Language
 import androidx.compose.material.icons.filled.MusicNote
@@ -96,6 +96,7 @@ fun AlbumDetailScreen(
     albumId: String,
     onBack: () -> Unit,
     onPlayerClick: () -> Unit,
+    onShowPlaylist: () -> Unit = {},
     vm: AlbumDetailViewModel = viewModel(factory = AlbumDetailViewModel.Factory(albumId))
 ) {
     val uiState by vm.uiState.collectAsState()
@@ -139,7 +140,10 @@ fun AlbumDetailScreen(
         },
         bottomBar = {
             if (playerState.currentItem != null) {
-                MiniPlayerBar(onExpand = onPlayerClick)
+                MiniPlayerBar(
+                    onExpand = onPlayerClick,
+                    onShowPlaylist = onShowPlaylist
+                )
             }
         }
     ) { padding ->
@@ -344,7 +348,7 @@ private fun AudioRow(
                     when {
                         isCurrentlyPlaying && isLoading -> CircularProgressIndicator(color = Color.White, strokeWidth = 2.dp, modifier = Modifier.size(16.dp))
                         isCurrentlyPlaying -> Icon(Icons.Default.GraphicEq, contentDescription = null, tint = Color.White, modifier = Modifier.size(18.dp))
-                        dimmed -> Icon(Icons.Default.CheckCircleOutline, contentDescription = "已完成", tint = Color.White, modifier = Modifier.size(18.dp))
+                        dimmed -> Icon(Icons.Default.Check, contentDescription = "已完成", tint = Color.White, modifier = Modifier.size(18.dp))
                     }
                 }
             }

@@ -306,7 +306,7 @@ private struct PlaylistRowView: View {
                             .foregroundColor(.white)
                             .symbolEffect(.variableColor.iterative)
                     } else if isCurrent {
-                        Image(systemName: "pause.fill")
+                        Image(systemName: "play.fill")
                             .font(.system(size: 14, weight: .medium))
                             .foregroundColor(.white)
                     } else {

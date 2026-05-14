@@ -6,6 +6,8 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.spring
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -15,17 +17,21 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import kotlin.math.roundToInt
 import coil3.compose.AsyncImage
 import com.ohv.android.platform.AudioPlayerManager
 import com.ohv.android.theme.OhvColors
@@ -39,15 +45,37 @@ fun PlayerScreen(
 ) {
     val player = AudioPlayerManager.shared
     val playerState by player.state.collectAsState()
+    val queueFinished by player.queueFinished.collectAsState()
+    val density = LocalDensity.current
 
-    var dragOffsetY by remember { mutableFloatStateOf(0f) }
-    val dismissThreshold = 300f
+    var dragOffsetPx by remember { mutableFloatStateOf(0f) }
+    val dismissThresholdPx = with(density) { 120.dp.toPx() }
 
     var isDraggingProgress by remember { mutableStateOf(false) }
     var dragProgress by remember { mutableFloatStateOf(0f) }
 
     var showSpeedPicker by remember { mutableStateOf(false) }
     var showSleepPicker by remember { mutableStateOf(false) }
+
+    // Animated offset for smooth snap-back after drag
+    val animatedOffset = remember { Animatable(0f) }
+    val animatedAlpha = remember { Animatable(1f) }
+
+    // Auto-dismiss when queue finishes
+    LaunchedEffect(queueFinished) {
+        if (queueFinished) {
+            player.consumeQueueFinished()
+            onDismiss()
+        }
+    }
+
+    // Animate offset when drag ends (snap-back)
+    LaunchedEffect(dragOffsetPx) {
+        if (dragOffsetPx <= 0f) {
+            animatedOffset.animateTo(0f, spring(dampingRatio = 0.6f, stiffness = 400f))
+            animatedAlpha.snapTo(1f)
+        }
+    }
 
     val uriHandler = LocalUriHandler.current
     val displayProgress = if (isDraggingProgress) dragProgress else playerState.progressRatio
@@ -57,19 +85,23 @@ fun PlayerScreen(
         modifier = Modifier
             .fillMaxSize()
             .background(OhvColors.Background)
-            .offset(y = maxOf(0f, dragOffsetY).dp)
+            .offset { IntOffset(0, dragOffsetPx.coerceAtLeast(0f).roundToInt()) }
+            .alpha(
+                if (dragOffsetPx > 0f) (1f - dragOffsetPx / (density.density * 400)).coerceIn(0f, 1f)
+                else 1f
+            )
             .pointerInput(Unit) {
                 detectVerticalDragGestures(
                     onDragEnd = {
-                        if (dragOffsetY > dismissThreshold) {
+                        if (dragOffsetPx > dismissThresholdPx) {
                             onDismiss()
                         } else {
-                            dragOffsetY = 0f
+                            dragOffsetPx = 0f
                         }
                     },
-                    onDragCancel = { dragOffsetY = 0f }
+                    onDragCancel = { dragOffsetPx = 0f }
                 ) { _, dragAmount ->
-                    if (dragAmount > 0) dragOffsetY += dragAmount
+                    if (dragAmount > 0) dragOffsetPx += dragAmount
                 }
             }
     ) {

@@ -245,8 +245,10 @@ final class AudioPlayerService: @unchecked Sendable {
     }
 
     func moveItem(fromOffsets source: IndexSet, toOffset destination: Int) {
+        let movingCurrent = source.contains(0)
         playlist.move(fromOffsets: source, toOffset: destination)
-        if destination == 0, let firstItem = playlist.first {
+        if movingCurrent || destination == 0 {
+            // 当前项被拖走 或 其他项被拖到队首 → 播放新的 playlist[0]
             play(playlist: playlist, startAt: 0)
         } else {
             syncAfterReorder()
@@ -255,6 +257,7 @@ final class AudioPlayerService: @unchecked Sendable {
 
     func removeItems(atOffsets offsets: IndexSet) {
         let deletingCurrent = offsets.contains(where: { playlist[$0].id == currentItem?.id })
+        offsets.forEach { audioCache.removeCache(for: playlist[$0].id) }
         playlist.remove(atOffsets: offsets)
         didRemoveItems(deletingCurrent: deletingCurrent)
     }
@@ -423,6 +426,7 @@ final class AudioPlayerService: @unchecked Sendable {
     private func handlePlaybackFinished() {
         if let id = currentItem?.id {
             progressStore.markCompleted(for: id)
+            audioCache.removeCache(for: id)
             playlist.removeAll { $0.id == id }
         }
         if !playlist.isEmpty {
