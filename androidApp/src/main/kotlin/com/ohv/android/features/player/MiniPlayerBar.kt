@@ -11,7 +11,6 @@ import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
@@ -46,8 +45,8 @@ fun MiniPlayerBar(
     val player = AudioPlayerManager.shared
     val state by player.state.collectAsState()
 
-    // 没有正在播放的内容时不显示
-    val currentItem = state.currentItem ?: return
+    // playingItem 仅在 STATE_READY 时更新，保证迷你播放条与实际播放内容始终对齐
+    val currentItem = state.playingItem ?: return
 
     Column(
         modifier = modifier
@@ -55,21 +54,28 @@ fun MiniPlayerBar(
             .background(OhvColors.CardBackground)
             .navigationBarsPadding()
     ) {
-        // 进度条（细线，不可交互）
-        LinearProgressIndicator(
-            progress = { state.progressRatio.coerceIn(0f, 1f) },
+        // 进度条（细线，不可交互，Capsule 样式对齐 iOS）
+        Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(2.dp),
-            color = OhvColors.Accent,
-            trackColor = OhvColors.Separator
-        )
+                .height(2.dp)
+                .clip(RoundedCornerShape(1.dp))
+                .background(OhvColors.Separator)
+        ) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth(state.progressRatio.coerceIn(0f, 1f))
+                    .fillMaxHeight()
+                    .clip(RoundedCornerShape(1.dp))
+                    .background(OhvColors.Accent)
+            )
+        }
 
         Row(
             modifier = Modifier
                 .fillMaxWidth()
                 .clickable(onClick = onExpand)
-                .padding(horizontal = 12.dp, vertical = 8.dp),
+                .padding(horizontal = 8.dp, vertical = 6.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(10.dp)
         ) {

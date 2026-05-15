@@ -33,9 +33,11 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.platform.LocalDensity
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import coil3.compose.AsyncImage
@@ -44,7 +46,6 @@ import com.ohv.android.platform.AudioPlayerManager
 import com.ohv.android.theme.OhvColors
 import com.ohv.shared.models.AudioItem
 import com.ohv.shared.models.Creator
-import com.ohv.shared.progress.PlaybackProgressStore
 import sh.calvin.reorderable.ReorderableItem
 import sh.calvin.reorderable.rememberReorderableLazyListState
 import kotlin.math.roundToInt
@@ -97,12 +98,7 @@ fun HomeScreen(
         }
     }
 
-    // 在 Composable 作用域内计算完成状态
-    val completedIds = remember(playerState.playlist) {
-        playerState.playlist.mapNotNull { item ->
-            if (PlaybackProgressStore.shared.isCompleted(item.id)) item.id else null
-        }.toSet()
-    }
+    val completedIds = playerState.sessionCompletedIds
 
     // 拖拽结束检测：用库的 isAnyItemDragging (derivedStateOf) 作为唯一信号，
     // 比 per-item isDragging callback 更可靠，不受 LazyColumn 重组时序影响
@@ -124,7 +120,9 @@ fun HomeScreen(
                         "一百伏特",
                         color = OhvColors.Accent,
                         fontWeight = FontWeight.Bold,
-                        fontSize = 20.sp
+                        fontSize = 20.sp,
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier.fillMaxWidth()
                     )
                 },
                 actions = {
@@ -274,6 +272,7 @@ private fun PlaylistRow(
 ) {
     val dimmed = isCompleted && !isCurrent
     val haptic = LocalHapticFeedback.current
+    val density = LocalDensity.current
 
     val dismissState = rememberSwipeToDismissBoxState(
         confirmValueChange = { value ->
@@ -283,7 +282,8 @@ private fun PlaylistRow(
             } else {
                 false
             }
-        }
+        },
+        positionalThreshold = { with(density) { 200.dp.toPx() } }
     )
 
     // 横滑跨越删除阈值时触发震动
@@ -304,13 +304,13 @@ private fun PlaylistRow(
                         .fillMaxSize()
                         .padding(horizontal = 16.dp)
                         .clip(RoundedCornerShape(16.dp))
-                        .background(OhvColors.Accent.copy(alpha = 0.15f)),
+                        .background(OhvColors.DestructiveRed),
                     contentAlignment = Alignment.CenterEnd
                 ) {
                     Icon(
                         Icons.Default.Delete,
                         contentDescription = "删除",
-                        tint = OhvColors.Accent,
+                        tint = OhvColors.White,
                         modifier = Modifier.padding(end = 24.dp)
                     )
                 }
@@ -419,7 +419,7 @@ private fun PlaylistRow(
                             // Title + duration
                             Column(
                                 Modifier.weight(1f),
-                                verticalArrangement = Arrangement.spacedBy(2.dp)
+                                verticalArrangement = Arrangement.spacedBy(0.dp)
                             ) {
                                 Text(
                                     text = item.title,
@@ -434,7 +434,11 @@ private fun PlaylistRow(
                                     fontWeight = if (isCurrent) FontWeight.SemiBold else FontWeight.Normal
                                 )
                                 Text(
-                                    text = item.duration.toMinutesOnly(),
+                                    text = if (isCurrent) {
+                                        item.duration.toRemainingText(progressRatio)
+                                    } else {
+                                        item.duration.toMinutesText()
+                                    },
                                     color = when {
                                         isCurrent -> OhvColors.Accent.copy(alpha = 0.75f)
                                         dimmed -> OhvColors.SecondaryText.copy(alpha = 0.6f)
@@ -598,23 +602,21 @@ private fun AlbumCard(
             text = album.title,
             color = OhvColors.White,
             fontSize = 13.sp,
-            maxLines = 2,
-            lineHeight = 18.sp
-        )
-        Text(
-            text = "${album.audioCount} 集",
-            color = OhvColors.SecondaryText,
-            fontSize = 11.sp
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis
         )
     }
 }
 
 // ── Duration formatting ──────────────────────────────────────────────────────
 
-private fun Double.toMinutesOnly(): String {
-    val total = this.toFloat().roundToInt()
-    val h = total / 3600
-    val m = (total % 3600) / 60
-    val s = total % 60
-    return if (h > 0) "%d:%02d:%02d".format(h, m, s) else "%d:%02d".format(m, s)
+private fun Double.toMinutesText(): String {
+    val totalMinutes = (this / 60).roundToInt()
+    return "${totalMinutes} 分钟"
+}
+
+private fun Double.toRemainingText(progressRatio: Float): String {
+    val remainingSeconds = this * (1.0 - progressRatio)
+    val remainingMinutes = (remainingSeconds / 60).roundToInt()
+    return "还有 ${remainingMinutes} 分钟"
 }

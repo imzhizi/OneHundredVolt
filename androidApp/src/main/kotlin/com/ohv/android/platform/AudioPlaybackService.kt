@@ -13,6 +13,7 @@ import androidx.media3.session.SessionResult
 import com.google.common.util.concurrent.Futures
 import com.google.common.util.concurrent.ListenableFuture
 import com.ohv.shared.platform.KeyValueStore
+import com.ohv.shared.progress.PlaybackProgressStore
 
 class AudioPlaybackService : MediaSessionService() {
 
@@ -90,6 +91,7 @@ class AudioPlaybackService : MediaSessionService() {
     }
 
     override fun onTaskRemoved(rootIntent: android.content.Intent?) {
+        PlaybackProgressStore.shared.flushToDisk()
         tanhProcessor.setEnabled(kvStore.getBoolean("loudness_boost_enabled", false))
         super.onTaskRemoved(rootIntent)
     }

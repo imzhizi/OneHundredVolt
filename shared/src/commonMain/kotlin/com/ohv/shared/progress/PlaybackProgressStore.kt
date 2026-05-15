@@ -5,12 +5,6 @@ import kotlinx.coroutines.*
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 
-/**
- * 本地播放进度存储
- * 移植自 iOS PlaybackProgressStore.swift
- * UserDefaults → KeyValueStore (expect/actual)
- * @Observable → 直接暴露方法，调用方用 StateFlow 包装
- */
 class PlaybackProgressStore(private val kvStore: KeyValueStore) {
 
     companion object {
@@ -24,25 +18,18 @@ class PlaybackProgressStore(private val kvStore: KeyValueStore) {
 
     private val json = Json { ignoreUnknownKeys = true }
 
-    // postId → 播放秒数
     private var cache: MutableMap<String, Double> = mutableMapOf()
-    // 已播完的单集 id 集合
     private val completedIds: MutableSet<String> = mutableSetOf()
 
-    private var debounceJob: Job? = null
+    private var persistJob: Job? = null
     private val scope = CoroutineScope(Dispatchers.Default + SupervisorJob())
 
     init {
-        // 从持久化存储恢复
         kvStore.getString(PROGRESS_KEY)?.let { raw ->
-            try {
-                cache = json.decodeFromString<Map<String, Double>>(raw).toMutableMap()
-            } catch (_: Exception) {}
+            try { cache = json.decodeFromString<Map<String, Double>>(raw).toMutableMap() } catch (_: Exception) {}
         }
         kvStore.getString(COMPLETED_KEY)?.let { raw ->
-            try {
-                completedIds.addAll(json.decodeFromString<List<String>>(raw))
-            } catch (_: Exception) {}
+            try { completedIds.addAll(json.decodeFromString<List<String>>(raw)) } catch (_: Exception) {}
         }
     }
 
@@ -57,9 +44,7 @@ class PlaybackProgressStore(private val kvStore: KeyValueStore) {
 
     fun lastPlayedDate(creatorId: String): Long? {
         val raw = kvStore.getString(CREATOR_LAST_PLAYED_KEY) ?: return null
-        return try {
-            json.decodeFromString<Map<String, Long>>(raw)[creatorId]
-        } catch (_: Exception) { null }
+        return try { json.decodeFromString<Map<String, Long>>(raw)[creatorId] } catch (_: Exception) { null }
     }
 
     // ─── 写入 ─────────────────────────────────────────────────────────────────
@@ -69,24 +54,28 @@ class PlaybackProgressStore(private val kvStore: KeyValueStore) {
         schedulePersist()
     }
 
+    /** 立即同步写磁盘，用于暂停、seek、杀进程等关键事件 */
+    fun flushToDisk() {
+        persistJob?.cancel()
+        kvStore.putString(PROGRESS_KEY, json.encodeToString(cache.toMap()))
+    }
+
     fun setLastPlayed(postId: String, creatorId: String? = null) {
         kvStore.putString(LAST_PLAYED_KEY, postId)
         if (!creatorId.isNullOrEmpty()) {
             val raw = kvStore.getString(CREATOR_LAST_PLAYED_KEY)
             val dict = try {
-                raw?.let { json.decodeFromString<Map<String, Long>>(it) }?.toMutableMap()
-                    ?: mutableMapOf()
+                raw?.let { json.decodeFromString<Map<String, Long>>(it) }?.toMutableMap() ?: mutableMapOf()
             } catch (_: Exception) { mutableMapOf() }
             dict[creatorId] = System.currentTimeMillis()
             kvStore.putString(CREATOR_LAST_PLAYED_KEY, json.encodeToString(dict))
         }
     }
 
-    /** 播放完成：清除进度，标记已完成 */
     fun markCompleted(postId: String) {
         cache.remove(postId)
         completedIds.add(postId)
-        schedulePersist()
+        flushToDisk()
         kvStore.putString(COMPLETED_KEY, json.encodeToString(completedIds.toList()))
     }
 
@@ -104,13 +93,16 @@ class PlaybackProgressStore(private val kvStore: KeyValueStore) {
         kvStore.remove(CREATOR_LAST_PLAYED_KEY)
     }
 
-    // ─── 防抖持久化（100ms）──────────────────────────────────────────────────
+    // ─── 定时落盘（15 秒），关键事件调 flushToDisk() 立即写 ──────────────────
+    // 连续播放时每 15 秒保底写一次，避免 kill 进程丢进度；
+    // 暂停/seek/onTaskRemoved 时通过 flushToDisk() 立即写。
 
     private fun schedulePersist() {
-        debounceJob?.cancel()
-        debounceJob = scope.launch {
-            delay(100)
+        if (persistJob?.isActive == true) return
+        persistJob = scope.launch {
+            delay(15_000)
             kvStore.putString(PROGRESS_KEY, json.encodeToString(cache.toMap()))
+            persistJob = null
         }
     }
 }

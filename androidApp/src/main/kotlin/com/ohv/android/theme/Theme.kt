@@ -7,7 +7,7 @@ import androidx.compose.ui.graphics.Color
 
 // 与 iOS Theme.swift 保持一致的颜色体系
 object OhvColors {
-    val Accent = Color(0xFFFFE500)          // 黄色主色
+    val Accent = Color(0xFFFFB800)          // 黄色主色（与 iOS #FFB800 对齐）
     val Background = Color(0xFF0A0A0A)      // 深黑背景
     val CardBackground = Color(0xFF1A1A1A)  // 卡片背景
     val SecondaryText = Color(0xFF888888)   // 次要文字

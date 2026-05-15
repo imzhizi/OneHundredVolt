@@ -218,11 +218,9 @@ fun PlayerScreen(
                 ControlsSection(
                     isPlaying = playerState.isPlaying,
                     isLoading = playerState.isLoading,
-                    onPrevious = { player.playPrevious() },
                     onSkipBack = { player.skipBackward(15) },
                     onPlayPause = { player.togglePlayPause() },
-                    onSkipForward = { player.skipForward(30) },
-                    onNext = { player.playNext() }
+                    onSkipForward = { player.skipForward(30) }
                 )
 
                 SecondaryControls(
@@ -245,7 +243,7 @@ fun PlayerScreen(
             title = { Text("播放速度", color = OhvColors.White) },
             text = {
                 Column {
-                    listOf(0.75f, 0.85f, 1.0f, 1.25f, 1.5f, 2.0f).forEach { rate ->
+                    listOf(0.75f, 0.9f, 1.0f, 1.1f, 1.25f, 1.5f, 2.0f).forEach { rate ->
                         TextButton(
                             onClick = {
                                 player.setPlaybackRate(rate)
@@ -391,23 +389,26 @@ private fun ProgressSection(
 private fun ControlsSection(
     isPlaying: Boolean,
     isLoading: Boolean,
-    onPrevious: () -> Unit,
     onSkipBack: () -> Unit,
     onPlayPause: () -> Unit,
-    onSkipForward: () -> Unit,
-    onNext: () -> Unit
+    onSkipForward: () -> Unit
 ) {
     Row(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.SpaceEvenly,
         verticalAlignment = Alignment.CenterVertically
     ) {
-        IconButton(onClick = onPrevious, modifier = Modifier.size(48.dp)) {
-            Icon(Icons.Default.SkipPrevious, contentDescription = "上一首", tint = OhvColors.White, modifier = Modifier.size(32.dp))
-        }
-
-        IconButton(onClick = onSkipBack, modifier = Modifier.size(48.dp)) {
-            Icon(Icons.Default.Replay, contentDescription = "快退15秒", tint = OhvColors.White, modifier = Modifier.size(28.dp))
+        IconButton(onClick = onSkipBack, modifier = Modifier.size(56.dp)) {
+            Box(contentAlignment = Alignment.Center) {
+                Icon(Icons.Default.Replay, contentDescription = "快退15秒", tint = OhvColors.White, modifier = Modifier.size(34.dp))
+                Text(
+                    "15",
+                    color = OhvColors.White,
+                    fontSize = 10.sp,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.offset(y = 2.dp)
+                )
+            }
         }
 
         Box(
@@ -430,12 +431,8 @@ private fun ControlsSection(
             }
         }
 
-        IconButton(onClick = onSkipForward, modifier = Modifier.size(48.dp)) {
-            Icon(Icons.Default.Forward30, contentDescription = "快进30秒", tint = OhvColors.White, modifier = Modifier.size(28.dp))
-        }
-
-        IconButton(onClick = onNext, modifier = Modifier.size(48.dp)) {
-            Icon(Icons.Default.SkipNext, contentDescription = "下一首", tint = OhvColors.White, modifier = Modifier.size(32.dp))
+        IconButton(onClick = onSkipForward, modifier = Modifier.size(56.dp)) {
+            Icon(Icons.Default.Forward30, contentDescription = "快进30秒", tint = OhvColors.White, modifier = Modifier.size(34.dp))
         }
     }
 }

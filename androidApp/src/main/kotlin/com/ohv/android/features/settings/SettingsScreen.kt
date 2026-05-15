@@ -15,9 +15,12 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.ohv.android.platform.AudioCacheService
 import com.ohv.android.platform.AudioPlayerManager
 import com.ohv.android.theme.OhvColors
 import com.ohv.shared.api.AfdianApiService
@@ -52,6 +55,7 @@ fun SettingsScreen(
     val kvStore = remember { KeyValueStore() }
     val progressStore = remember { PlaybackProgressStore.shared }
     val playerManager = remember { AudioPlayerManager.shared }
+    val audioCache = remember { AudioCacheService.shared }
     val syncService = remember { SyncService(api, db, kvStore) }
 
     // 实时读取状态
@@ -74,7 +78,15 @@ fun SettingsScreen(
         containerColor = OhvColors.Background,
         topBar = {
             TopAppBar(
-                title = { Text("设置", color = OhvColors.White, fontWeight = FontWeight.SemiBold) },
+                title = {
+                    Text(
+                        "设置",
+                        color = OhvColors.White,
+                        fontWeight = FontWeight.SemiBold,
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(
@@ -204,7 +216,13 @@ fun SettingsScreen(
                 SettingsRow(
                     icon = Icons.Default.Info,
                     label = "版本",
-                    trailing = { Text("1.0.0", color = OhvColors.SecondaryText, fontSize = 13.sp) }
+                    trailing = {
+                        val context = LocalContext.current
+                        val version = try {
+                            context.packageManager.getPackageInfo(context.packageName, 0).versionName ?: "—"
+                        } catch (_: Exception) { "—" }
+                        Text(version, color = OhvColors.SecondaryText, fontSize = 13.sp)
+                    }
                 )
             }
 
@@ -221,9 +239,12 @@ fun SettingsScreen(
             confirmButton = {
                 TextButton(onClick = {
                     showLogoutAlert = false
-                    api.logout()
-                    db.clearAll()
+                    playerManager.clearAll()
                     progressStore.clearAll()
+                    audioCache.clearCache()
+                    db.clearAll()
+                    kvStore.clear()
+                    api.logout()
                     onLogout()
                 }) {
                     Text("退出", color = Color(0xFFFF3B30))

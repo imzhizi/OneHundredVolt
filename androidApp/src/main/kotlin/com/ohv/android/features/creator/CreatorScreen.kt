@@ -13,6 +13,7 @@ import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Language
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.MusicNote
+import androidx.compose.material.icons.automirrored.filled.OpenInNew
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -20,8 +21,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -30,6 +31,7 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.compose.viewModel
 import coil3.compose.AsyncImage
+import com.ohv.android.components.InAppBrowserSheet
 import com.ohv.android.theme.OhvColors
 import com.ohv.shared.db.DatabaseService
 import com.ohv.shared.models.Album
@@ -85,14 +87,24 @@ fun CreatorScreen(
     vm: CreatorViewModel = viewModel(factory = CreatorViewModel.Factory(creatorId))
 ) {
     val uiState by vm.uiState.collectAsState()
-    val uriHandler = LocalUriHandler.current
     val creator = uiState.creator
+    var browserUrl by remember { mutableStateOf<String?>(null) }
 
     Scaffold(
         containerColor = OhvColors.Background,
         topBar = {
             TopAppBar(
-                title = { Text(creator?.name ?: "", color = OhvColors.White, fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                title = {
+                    Text(
+                        creator?.name ?: "",
+                        color = OhvColors.White,
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回", tint = OhvColors.Accent)
@@ -100,8 +112,14 @@ fun CreatorScreen(
                 },
                 actions = {
                     if (creator?.urlSlug != null) {
-                        IconButton(onClick = { uriHandler.openUri(creator.afdianPageUrl) }) {
-                            Icon(Icons.Default.Language, contentDescription = "爱发电主页", tint = OhvColors.Accent)
+                        TextButton(onClick = { browserUrl = creator.afdianPageUrl }) {
+                            Text("爱发电", color = OhvColors.Accent, fontSize = 14.sp)
+                            Icon(
+                                Icons.AutoMirrored.Filled.OpenInNew,
+                                contentDescription = null,
+                                tint = OhvColors.Accent,
+                                modifier = Modifier.size(14.dp).padding(start = 2.dp)
+                            )
                         }
                     }
                 },
@@ -116,14 +134,14 @@ fun CreatorScreen(
             // Creator header
             item {
                 Column(
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 16.dp),
+                    modifier = Modifier.fillMaxWidth().padding(24.dp),
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
                     AsyncImage(
                         model = creator?.avatarUrl,
                         contentDescription = creator?.name,
-                        modifier = Modifier.size(64.dp).clip(CircleShape).background(OhvColors.CardBackground),
+                        modifier = Modifier.size(80.dp).clip(CircleShape).background(OhvColors.CardBackground),
                         contentScale = ContentScale.Crop
                     )
                     Text(
@@ -153,6 +171,10 @@ fun CreatorScreen(
                 HorizontalDivider(color = OhvColors.Separator, modifier = Modifier.padding(start = 88.dp))
             }
         }
+    }
+
+    browserUrl?.let { url ->
+        InAppBrowserSheet(url = url, onDismiss = { browserUrl = null })
     }
 }
 
@@ -224,7 +246,15 @@ fun AllCreatorsScreen(
         containerColor = OhvColors.Background,
         topBar = {
             TopAppBar(
-                title = { Text("全部创作者", color = OhvColors.White, fontWeight = FontWeight.SemiBold) },
+                title = {
+                    Text(
+                        "全部创作者",
+                        color = OhvColors.White,
+                        fontWeight = FontWeight.SemiBold,
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "返回", tint = OhvColors.Accent)

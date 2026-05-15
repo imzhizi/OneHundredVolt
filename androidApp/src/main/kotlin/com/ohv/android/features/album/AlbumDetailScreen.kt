@@ -13,6 +13,7 @@ import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.filled.Language
 import androidx.compose.material.icons.filled.MusicNote
+import androidx.compose.material.icons.automirrored.filled.OpenInNew
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.PlayCircleFilled
 import androidx.compose.material3.*
@@ -23,8 +24,8 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -34,6 +35,7 @@ import androidx.lifecycle.viewModelScope
 import androidx.lifecycle.viewmodel.compose.viewModel
 import coil3.compose.AsyncImage
 import com.ohv.android.features.player.MiniPlayerBar
+import com.ohv.android.components.InAppBrowserSheet
 import com.ohv.android.platform.AudioPlayerManager
 import com.ohv.android.theme.OhvColors
 import com.ohv.shared.db.DatabaseService
@@ -100,9 +102,10 @@ fun AlbumDetailScreen(
     vm: AlbumDetailViewModel = viewModel(factory = AlbumDetailViewModel.Factory(albumId))
 ) {
     val uiState by vm.uiState.collectAsState()
-    val uriHandler = LocalUriHandler.current
     val player = AudioPlayerManager.shared
     val playerState by player.state.collectAsState()
+
+    var browserUrl by remember { mutableStateOf<String?>(null) }
 
     Scaffold(
         containerColor = OhvColors.Background,
@@ -114,7 +117,9 @@ fun AlbumDetailScreen(
                         color = OhvColors.White,
                         fontWeight = FontWeight.SemiBold,
                         maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
+                        overflow = TextOverflow.Ellipsis,
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier.fillMaxWidth()
                     )
                 },
                 navigationIcon = {
@@ -127,12 +132,18 @@ fun AlbumDetailScreen(
                     }
                 },
                 actions = {
-                    IconButton(onClick = {
+                    TextButton(onClick = {
                         uiState.album?.let {
-                            uriHandler.openUri("https://afdian.com/album/${it.id}")
+                            browserUrl = "https://afdian.com/album/${it.id}"
                         }
                     }) {
-                        Icon(Icons.Default.Language, contentDescription = "在浏览器中打开", tint = OhvColors.Accent)
+                        Text("爱发电", color = OhvColors.Accent, fontSize = 14.sp)
+                        Icon(
+                            Icons.AutoMirrored.Filled.OpenInNew,
+                            contentDescription = null,
+                            tint = OhvColors.Accent,
+                            modifier = Modifier.size(14.dp).padding(start = 2.dp)
+                        )
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = OhvColors.Background)
@@ -205,6 +216,14 @@ fun AlbumDetailScreen(
                 }
             }
         }
+    }
+
+    // 应用内浏览器
+    browserUrl?.let { url ->
+        InAppBrowserSheet(
+            url = url,
+            onDismiss = { browserUrl = null }
+        )
     }
 }
 
@@ -369,7 +388,7 @@ private fun AudioRow(
                 overflow = TextOverflow.Ellipsis
             )
             Text(
-                item.duration.toMinutesOnly(),
+                item.duration.toMinutesText(),
                 color = OhvColors.SecondaryText.copy(alpha = if (dimmed) 0.6f else 1f),
                 fontSize = 12.sp
             )
@@ -407,12 +426,9 @@ private fun AudioRow(
 
 // ─── Duration formatting ──────────────────────────────────────────────────────
 
-private fun Double.toMinutesOnly(): String {
-    val total = roundToInt()
-    val h = total / 3600
-    val m = (total % 3600) / 60
-    val s = total % 60
-    return if (h > 0) "%d:%02d:%02d".format(h, m, s) else "%d:%02d".format(m, s)
+private fun Double.toMinutesText(): String {
+    val totalMinutes = (this / 60).roundToInt()
+    return "${totalMinutes} 分钟"
 }
 
 private fun Double.toHumanReadable(): String {
