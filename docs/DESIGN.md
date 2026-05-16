@@ -2,9 +2,9 @@
 
 > 爱发电音频播放增强项目
 >
-> 专项设计：`docs/PLAYLIST_LOUDNESS_PLAN.md`
+> 专项设计：`docs/plans/v1.1-playlist-loudness.md`
 > 版本记录：`docs/CHANGELOG.md`
-> 当前版本：iOS v1.1 / Android v1.2
+> 当前版本：iOS v1.4 / Android v1.2
 
 ## 核心概念
 

@@ -15,6 +15,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -109,7 +110,13 @@ fun LoginWebViewScreen(
         topBar = {
             TopAppBar(
                 title = {
-                    Text("登录爱发电", color = OhvColors.White, fontWeight = FontWeight.SemiBold)
+                    Text(
+                        "登录爱发电",
+                        color = OhvColors.White,
+                        fontWeight = FontWeight.SemiBold,
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier.fillMaxWidth()
+                    )
                 },
                 navigationIcon = {
                     IconButton(onClick = onBack) {

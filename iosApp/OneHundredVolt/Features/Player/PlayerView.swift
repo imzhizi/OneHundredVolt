@@ -96,7 +96,7 @@ struct PlayerView: View {
         }
         // 速度选择弹窗
         .confirmationDialog("播放速度", isPresented: $showSpeedPicker, titleVisibility: .visible) {
-            ForEach([0.75, 0.85, 1.0, 1.25, 1.5, 2.0] as [Float], id: \.self) { rate in
+            ForEach([0.75, 0.9, 1.0, 1.1, 1.25, 1.5, 2.0] as [Float], id: \.self) { rate in
                 Button("\(rate == 1.0 ? "1.0" : String(format: "%.2g", rate))x") {
                     player.playbackRate = rate
                 }
@@ -245,19 +245,10 @@ struct PlayerView: View {
 
     private var controlsSection: some View {
         HStack(spacing: 0) {
-            // 上一首
-            Button { player.playPrevious() } label: {
-                Image(systemName: "backward.fill")
-                    .font(.system(size: 28))
-                    .foregroundColor(Theme.Colors.textPrimary)
-                    .frame(maxWidth: .infinity)
-            }
-            .buttonStyle(ScaleButtonStyle())
-
             // 快退 15s
             Button { player.skipBackward() } label: {
                 Image(systemName: "gobackward.15")
-                    .font(.system(size: 24))
+                    .font(.system(size: 30))
                     .foregroundColor(Theme.Colors.textPrimary)
                     .frame(maxWidth: .infinity)
             }
@@ -285,16 +276,7 @@ struct PlayerView: View {
             // 快进 30s
             Button { player.skipForward() } label: {
                 Image(systemName: "goforward.30")
-                    .font(.system(size: 24))
-                    .foregroundColor(Theme.Colors.textPrimary)
-                    .frame(maxWidth: .infinity)
-            }
-            .buttonStyle(ScaleButtonStyle())
-
-            // 下一首
-            Button { player.playNext() } label: {
-                Image(systemName: "forward.fill")
-                    .font(.system(size: 28))
+                    .font(.system(size: 30))
                     .foregroundColor(Theme.Colors.textPrimary)
                     .frame(maxWidth: .infinity)
             }

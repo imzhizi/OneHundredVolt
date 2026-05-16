@@ -68,8 +68,13 @@ struct AlbumDetailView: View {
                 Button {
                     postDetailURL = URL(string: "https://afdian.com/album/\(album.id)")
                 } label: {
-                    Image(systemName: "safari")
-                        .foregroundColor(Theme.Colors.accent)
+                    HStack(spacing: 4) {
+                        Text("爱发电")
+                            .font(Theme.Typography.caption)
+                        Image(systemName: "arrow.up.right")
+                            .font(.system(size: 10))
+                    }
+                    .foregroundColor(Theme.Colors.accent)
                 }
             }
         }

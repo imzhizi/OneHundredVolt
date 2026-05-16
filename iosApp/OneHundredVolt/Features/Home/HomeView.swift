@@ -111,17 +111,34 @@ struct HomeView: View {
                 NavigationLink {
                     CreatorView(creator: creator)
                 } label: {
-                    HStack {
-                        Text(creator.name)
-                            .font(Theme.Typography.subheadline)
-                            .foregroundColor(Theme.Colors.textPrimary)
-                            .padding(.horizontal, Theme.Spacing.md)
+                    HStack(spacing: Theme.Spacing.sm) {
+                        CachedImage(urlString: creator.avatarUrl) {
+                            Circle().fill(Theme.Colors.cardBackground)
+                                .overlay(Image(systemName: "person.fill").foregroundColor(Theme.Colors.textSecondary))
+                        }
+                        .frame(width: 36, height: 36)
+                        .clipShape(Circle())
+                        .overlay(Circle().stroke(Theme.Colors.divider, lineWidth: 1))
+
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(creator.name)
+                                .font(Theme.Typography.subheadline)
+                                .foregroundColor(Theme.Colors.textPrimary)
+                            if let doing = creator.doing {
+                                Text(doing)
+                                    .font(Theme.Typography.caption)
+                                    .foregroundColor(Theme.Colors.textSecondary)
+                                    .lineLimit(1)
+                            }
+                        }
+
                         Spacer()
+
                         Image(systemName: "chevron.right")
                             .font(.system(size: 12))
                             .foregroundColor(Theme.Colors.textSecondary)
-                            .padding(.trailing, Theme.Spacing.md)
                     }
+                    .padding(.horizontal, Theme.Spacing.md)
                 }
                 .buttonStyle(.plain)
 
@@ -138,6 +155,9 @@ struct HomeView: View {
                     }
                     .padding(.horizontal, Theme.Spacing.md)
                 }
+
+                Divider().background(Theme.Colors.divider)
+                    .padding(.top, Theme.Spacing.sm)
             }
             .padding(.top, Theme.Spacing.md)
             .padding(.bottom, Theme.Spacing.lg)
@@ -202,12 +222,16 @@ struct HomeView: View {
                                     : Theme.Colors.cardBackground)
                             )
                             .listRowSeparatorTint(Theme.Colors.divider)
+                            .swipeActions(edge: .trailing, allowsFullSwipe: true) {
+                                Button(role: .destructive) {
+                                    player.removeItems(atOffsets: IndexSet(integer: index))
+                                } label: {
+                                    Image(systemName: "trash.fill")
+                                }
+                            }
                     }
                     .onMove { from, to in
                         player.moveItem(fromOffsets: from, toOffset: to)
-                    }
-                    .onDelete { indices in
-                        player.removeItems(atOffsets: indices)
                     }
                 }
                 .listStyle(.plain)
@@ -324,7 +348,7 @@ private struct PlaylistRowView: View {
                     .foregroundColor(isCurrent ? Theme.Colors.accent : Theme.Colors.textPrimary)
                     .lineLimit(1)
 
-                Text(item.duration.minutesOnly)
+                Text(isCurrent ? "还有 \(max(1, Int(player.duration - player.currentTime) / 60)) 分钟" : item.duration.minutesOnly)
                     .font(Theme.Typography.mono)
                     .foregroundColor(isCurrent ? Theme.Colors.accent.opacity(0.7) : Theme.Colors.textSecondary)
             }

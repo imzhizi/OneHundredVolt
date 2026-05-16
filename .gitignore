@@ -21,8 +21,8 @@ Package.resolved
 .idea/
 
 # Projects
-docs/
 .playwright-mcp/
+memory/
 
 # Gradle / Android
 .gradle/

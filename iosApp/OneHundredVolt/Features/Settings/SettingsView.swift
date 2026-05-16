@@ -208,13 +208,12 @@ struct SettingsView: View {
     // MARK: - 操作
 
     private func logout() {
-        // clearAll() 会停播、清空播放列表、让 MiniPlayer 消失
         player.clearAll()
         api.logout()
         db.clearAll()
         progressStore.clearAll()
+        audioCache.clearCache()
         UserDefaults.standard.removeObject(forKey: "hasCompletedOnboarding")
-        // 通知 App 根视图回到 Onboarding
         NotificationCenter.default.post(name: .didLogout, object: nil)
         dismiss()
     }

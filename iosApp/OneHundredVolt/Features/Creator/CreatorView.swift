@@ -45,9 +45,10 @@ struct CreatorView: View {
                         CreatorWebView(creator: creator, url: url)
                     } label: {
                         HStack(spacing: 4) {
-                            Text("爱发电主页")
+                            Text("爱发电")
                                 .font(Theme.Typography.caption)
-                            Image(systemName: "arrow.up.right.square")
+                            Image(systemName: "arrow.up.right")
+                                .font(.system(size: 10))
                         }
                         .foregroundColor(Theme.Colors.accent)
                     }
@@ -60,34 +61,30 @@ struct CreatorView: View {
     // MARK: - 创作者头部
 
     private var creatorHeader: some View {
-        HStack(spacing: Theme.Spacing.md) {
-            // 头像（统一使用 CachedImage 以享受内存缓存）
+        VStack(spacing: Theme.Spacing.sm) {
             CachedImage(urlString: creator.avatarUrl) {
                 Circle().fill(Theme.Colors.cardBackground)
                     .overlay(Image(systemName: "person.fill").foregroundColor(Theme.Colors.textSecondary))
             }
-            .frame(width: 64, height: 64)
+            .frame(width: 80, height: 80)
             .clipShape(Circle())
 
-            // 信息
-            VStack(alignment: .leading, spacing: Theme.Spacing.xs) {
-                Text(creator.name)
-                    .font(Theme.Typography.title)
-                    .foregroundColor(Theme.Colors.textPrimary)
+            Text(creator.name)
+                .font(Theme.Typography.title)
+                .foregroundColor(Theme.Colors.textPrimary)
 
-                if let doing = creator.doing {
-                    Text(doing)
-                        .font(Theme.Typography.caption)
-                        .foregroundColor(Theme.Colors.textSecondary)
-                }
-
-                Text("\(viewModel.albums.count) 个专辑 · \(viewModel.totalAudioCount) 期音频")
+            if let doing = creator.doing {
+                Text(doing)
                     .font(Theme.Typography.caption)
                     .foregroundColor(Theme.Colors.textSecondary)
             }
 
-            Spacer()
+            Text("\(viewModel.albums.count) 个专辑 · \(viewModel.totalAudioCount) 期音频")
+                .font(Theme.Typography.caption)
+                .foregroundColor(Theme.Colors.textSecondary)
         }
+        .frame(maxWidth: .infinity)
+        .multilineTextAlignment(.center)
         .padding(Theme.Spacing.md)
     }
 }
