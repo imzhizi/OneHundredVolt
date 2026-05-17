@@ -15,20 +15,24 @@ android {
         applicationId = "com.imzhizi.onehundredvolt"
         minSdk = 26
         targetSdk = 35
-        versionCode = 4
-        versionName = "1.4.0"
+        versionCode = 5
+        versionName = "1.5.0"
     }
 
     val localProps = Properties()
     val localPropsFile = rootProject.file("local.properties")
     if (localPropsFile.exists()) localProps.load(localPropsFile.inputStream())
 
+    fun signingProp(envKey: String, propKey: String = envKey, default: String = "") =
+        System.getenv(envKey) ?: localProps.getProperty(propKey, default)
+
     signingConfigs {
         create("release") {
-            storeFile = file(localProps.getProperty("KEYSTORE_FILE", "ohv-release.keystore"))
-            storePassword = localProps.getProperty("KEYSTORE_PASSWORD", "")
-            keyAlias = localProps.getProperty("KEY_ALIAS", "ohv")
-            keyPassword = localProps.getProperty("KEY_PASSWORD", "")
+            val ksPath = signingProp("KEYSTORE_FILE", default = "ohv-release.keystore")
+            storeFile = if (ksPath.startsWith("/")) File(ksPath) else file(ksPath)
+            storePassword = signingProp("KEYSTORE_PASSWORD")
+            keyAlias = signingProp("KEY_ALIAS", default = "ohv")
+            keyPassword = signingProp("KEY_PASSWORD")
         }
     }
 

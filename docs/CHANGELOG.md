@@ -4,6 +4,43 @@
 
 ---
 
+## v1.5 — Android OTA 应用内更新
+
+> 状态：✅ 已实现
+> 日期：2026-05-17
+> 平台：Android
+> 对应设计文档：`plans/v1.5-ota-update.md`
+
+### 新增功能
+
+| # | 功能 | 说明 |
+|---|------|------|
+| 1 | GitHub Actions 自动发布 | push tag `v*` 触发 CI/CD，自动构建签名 APK 并上传到 GitHub Release，同步更新 `version.json` |
+| 2 | 应用内版本检测（多节点降级） | 通过 jsDelivr CDN 读取 `version.json`，失败依次降级到 ghproxy → raw.githubusercontent.com |
+| 3 | 国内镜像加速下载（多节点降级） | 下载依次尝试 github.com → ghproxy → ghfast，开了代理必然成功 |
+| 4 | 更新弹窗 UI | 三态弹窗：确认更新 → 下载进度 → 安装引导；下载失败可重试 |
+| 5 | 设置页手动检查更新 | "关于"区域「检查更新」按钮，失败显示错误信息并支持重试 |
+| 6 | 启动自动检测 + 频率控制 | 启动时自动检测，有新版本弹窗提示；同版本 7 天内只提示一次，出新版本立即提示并重置计时 |
+| 7 | APK 下载到公共 Downloads | 下载到系统 Downloads 目录，文件管理器可见，安装失败也可手动安装 |
+| 8 | 安装权限引导 | 点击安装前检查 `canRequestPackageInstalls()`，未授权自动跳到系统设置引导开启 |
+
+### 涉及文件
+
+**新建：**
+- `.github/workflows/release.yml`
+- `version.json` — 仓库根目录版本信息（jsDelivr CDN 分发）
+- `androidApp/.../platform/AppUpdater.kt`
+- `androidApp/.../components/UpdateDialog.kt`
+- `androidApp/src/main/res/xml/file_paths.xml`
+
+**修改：**
+- `androidApp/src/main/AndroidManifest.xml` — 新增 `REQUEST_INSTALL_PACKAGES`、`WRITE_EXTERNAL_STORAGE`(≤API28)、FileProvider
+- `androidApp/src/main/kotlin/com/ohv/android/OhvApplication.kt` — 启动检测 + 频率控制 + StateFlow 暴露结果
+- `androidApp/src/main/kotlin/com/ohv/android/MainActivity.kt` — 订阅 pendingUpdate 展示弹窗
+- `androidApp/src/main/kotlin/com/ohv/android/features/settings/SettingsScreen.kt` — 手动检查入口、错误信息展示、竞态修复
+
+---
+
 ## v1.4 — UI 精细打磨 + 播放器优化
 
 > 状态：✅ 已实现

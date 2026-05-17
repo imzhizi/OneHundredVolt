@@ -1,0 +1,122 @@
+name: Release APK
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+env:
+  JAVA_HOME: /opt/hostedtoolcache/Java_temurin-hotspot_jdk/17/x64
+
+jobs:
+  build-and-release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: 'temurin'
+
+      - name: Decode Keystore
+        run: |
+          echo "${{ secrets.SIGNING_KEY_BASE64 }}" | base64 --decode > androidApp/ohv-release.keystore
+
+      - name: Build Release APK
+        env:
+          KEYSTORE_FILE: ${{ github.workspace }}/androidApp/ohv-release.keystore
+          KEYSTORE_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: chmod +x gradlew && ./gradlew assembleRelease
+
+      - name: Get Version Info
+        id: version
+        run: |
+          TAG=${GITHUB_REF#refs/tags/v}
+          VERSION_NAME=$(grep "versionName" androidApp/build.gradle.kts | head -1 | grep -oP '"\K[^"]+')
+          VERSION_CODE=$(grep "versionCode" androidApp/build.gradle.kts | head -1 | grep -oP '\d+')
+          echo "tag=$TAG" >> $GITHUB_OUTPUT
+          echo "version_name=$VERSION_NAME" >> $GITHUB_OUTPUT
+          echo "version_code=$VERSION_CODE" >> $GITHUB_OUTPUT
+
+      - name: Find and Rename APK
+        id: find_apk
+        run: |
+          APK_PATH=$(find androidApp/build/outputs/apk/release -name "*.apk" -type f | head -1)
+          # 统一重命名为英文文件名，避免中文在 CI 环境中被截断
+          APK_RENAMED="androidApp/build/outputs/apk/release/ohv-${{ steps.version.outputs.version_name }}-release.apk"
+          mv "$APK_PATH" "$APK_RENAMED"
+          echo "apk_path=$APK_RENAMED" >> $GITHUB_OUTPUT
+          echo "apk_filename=ohv-${{ steps.version.outputs.version_name }}-release.apk" >> $GITHUB_OUTPUT
+
+      - name: Generate Release Body
+        id: body
+        run: |
+          MIRROR_URL="https://ghfast.com/https://github.com/${{ github.repository }}/releases/download/v${{ steps.version.outputs.tag }}/${{ steps.find_apk.outputs.apk_filename }}"
+          cat > release_body.txt << EOF
+          ## 一百伏特 ${{ steps.version.outputs.version_name }}
+
+          **版本号**: ${{ steps.version.outputs.version_name }}
+          **Build**: ${{ steps.version.outputs.version_code }}
+
+          ### 下载安装包
+
+          **GitHub 原始下载**（Release Assets）
+
+          **国内加速下载**（推荐）:
+          \`\`\`
+          $MIRROR_URL
+          \`\`\`
+
+          > 扫描二维码或复制链接到浏览器下载
+          EOF
+          echo "body<<EOF" >> $GITHUB_OUTPUT
+          cat release_body.txt >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: "一百伏特 ${{ steps.version.outputs.version_name }}"
+          body: ${{ steps.body.outputs.body }}
+          files: ${{ steps.find_apk.outputs.apk_path }}
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Update version.json for OTA
+        run: |
+          VERSION_NAME="${{ steps.version.outputs.version_name }}"
+          VERSION_CODE="${{ steps.version.outputs.version_code }}"
+          TAG="v${{ steps.version.outputs.tag }}"
+          APK_FILENAME="${{ steps.find_apk.outputs.apk_filename }}"
+          DOWNLOAD_URL="https://github.com/${{ github.repository }}/releases/download/${TAG}/${APK_FILENAME}"
+
+          cat > version.json << EOF
+          {
+            "versionName": "${VERSION_NAME}",
+            "versionCode": ${VERSION_CODE},
+            "tag": "${TAG}",
+            "downloadUrl": "${DOWNLOAD_URL}",
+            "changelog": "- 升级到 ${VERSION_NAME}"
+          }
+          EOF
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git fetch origin main
+          git checkout main
+          git add version.json
+          git commit -m "chore: update version.json to ${VERSION_NAME} [skip ci]" || echo "No changes to commit"
+          git push origin main
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

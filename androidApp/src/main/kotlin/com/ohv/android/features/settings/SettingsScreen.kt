@@ -22,6 +22,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.ohv.android.platform.AudioCacheService
 import com.ohv.android.platform.AudioPlayerManager
+import com.ohv.android.platform.AppUpdater
+import com.ohv.android.components.UpdateDialog
 import com.ohv.android.theme.OhvColors
 import com.ohv.shared.api.AfdianApiService
 import com.ohv.shared.db.DatabaseService
@@ -70,8 +72,58 @@ fun SettingsScreen(
     var showClearCacheAlert by remember { mutableStateOf(false) }
     var cacheSizeBytes by remember { mutableStateOf(0L) }
 
+    // ── OTA 更新状态 ──────────────────────────────────────────────
+    var showUpdateDialog by remember { mutableStateOf<AppUpdater.UpdateInfo?>(null) }
+    var updateCheckStatus by remember { mutableStateOf<String?>(null) } // "checking" | "up-to-date" | error msg
+    var currentVersionCode by remember { mutableIntStateOf(0) }
+    var currentVersionName by remember { mutableStateOf("") }
+
+    // 在 composable 上下文中获取 context（用于版本信息读取）
+    val appContext = LocalContext.current.applicationContext
+
     LaunchedEffect(Unit) {
         cacheSizeBytes = calculateCacheSize()
+        // 获取当前版本信息
+        currentVersionCode = try {
+            appContext.packageManager.getPackageInfo(appContext.packageName, 0).versionCode
+        } catch (_: Exception) { 0 }
+        currentVersionName = try {
+            appContext.packageManager.getPackageInfo(appContext.packageName, 0).versionName ?: ""
+        } catch (_: Exception) { "" }
+    }
+
+    // ── OTA 更新检查逻辑 ────────────────────────────────────────────
+    // 用独立 trigger 触发检查，避免与 currentVersionCode 初始化产生竞态
+    var checkTrigger by remember { mutableIntStateOf(0) }
+    LaunchedEffect(checkTrigger) {
+        if (checkTrigger == 0) return@LaunchedEffect
+        updateCheckStatus = "checking"
+        try {
+            // 实时读取 versionCode，确保不拿到初始值 0
+            val versionCode = try {
+                appContext.packageManager.getPackageInfo(appContext.packageName, 0).versionCode
+            } catch (_: Exception) { 0 }
+            val result = AppUpdater.checkForUpdate(versionCode)
+            if (result != null) {
+                showUpdateDialog = result
+                updateCheckStatus = null
+            } else {
+                updateCheckStatus = "up-to-date"
+            }
+        } catch (e: Exception) {
+            val msg = (e.toString()).take(80)
+            updateCheckStatus = "error: $msg"
+        }
+    }
+
+    // ── 更新弹窗 ─────────────────────────────────────────────────────
+    val info = showUpdateDialog
+    if (info != null) {
+        UpdateDialog(
+            updateInfo = info,
+            onDismiss = { showUpdateDialog = null },
+            onInstallReady = { showUpdateDialog = null }
+        )
     }
 
     Scaffold(
@@ -224,6 +276,48 @@ fun SettingsScreen(
                         Text(version, color = OhvColors.SecondaryText, fontSize = 13.sp)
                     }
                 )
+                HorizontalDivider(color = OhvColors.Separator)
+
+                // 更新状态 / 检查按钮
+                when (updateCheckStatus) {
+                    "checking" -> {
+                        SettingsRow(
+                            icon = Icons.Default.Sync,
+                            label = "检查更新",
+                            trailing = {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(16.dp),
+                                    color = OhvColors.Accent,
+                                    strokeWidth = 2.dp
+                                )
+                            }
+                        )
+                    }
+                    "up-to-date" -> {
+                        SettingsRow(
+                            icon = Icons.Default.CheckCircle,
+                            label = "已是最新版",
+                            trailing = { Text("v$currentVersionName", color = Color(0xFF34C759), fontSize = 13.sp) }
+                        )
+                    }
+                    else -> {
+                        if (updateCheckStatus != null && updateCheckStatus != "up-to-date") {
+                            SettingsButton(
+                                icon = Icons.Default.Warning,
+                                label = "检查失败，点击重试",
+                                labelColor = Color(0xFFFF9500),
+                                iconTint = Color(0xFFFF9500),
+                                onClick = { updateCheckStatus = null; checkTrigger++ }
+                            )
+                        } else {
+                    SettingsButton(
+                        icon = Icons.Default.SystemUpdate,
+                        label = "检查更新",
+                        onClick = { checkTrigger++ }
+                    )
+                        }
+                    }
+                }
             }
 
             Spacer(modifier = Modifier.height(32.dp))

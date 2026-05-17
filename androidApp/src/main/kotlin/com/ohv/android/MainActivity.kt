@@ -10,10 +10,10 @@ import androidx.compose.material3.Surface
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.core.view.WindowCompat
+import com.ohv.android.components.UpdateDialog
 import com.ohv.android.features.navigation.AppNavHost
 import com.ohv.android.theme.OhvTheme
 import com.ohv.shared.platform.SecureStorage
-import androidx.core.content.ContextCompat
 
 class MainActivity : ComponentActivity() {
 
@@ -22,8 +22,6 @@ class MainActivity : ComponentActivity() {
 
         enableEdgeToEdge()
 
-        // App 始终深色 UI，状态栏图标必须为浅色（白色），不管系统主题
-        // 必须在 enableEdgeToEdge 之后设置，否则会被覆盖
         val controller = WindowCompat.getInsetsController(window, window.decorView)
         controller.isAppearanceLightStatusBars = false
         controller.isAppearanceLightNavigationBars = false
@@ -39,11 +37,23 @@ class MainActivity : ComponentActivity() {
                     val hasToken = remember {
                         mutableStateOf(secureStorage.get("afdian_auth_token") != null)
                     }
+
                     AppNavHost(
                         isLoggedIn = hasToken.value,
                         onLoginComplete = { hasToken.value = true },
                         onLogout = { hasToken.value = false }
                     )
+
+                    // 启动时更新弹窗（频率控制在 OhvApplication 里）
+                    val pendingUpdate by OhvApplication.pendingUpdate.collectAsState()
+                    val update = pendingUpdate
+                    if (update != null) {
+                        UpdateDialog(
+                            updateInfo = update,
+                            onDismiss = { OhvApplication.consumePendingUpdate() },
+                            onInstallReady = { OhvApplication.consumePendingUpdate() }
+                        )
+                    }
                 }
             }
         }

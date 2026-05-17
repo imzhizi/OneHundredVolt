@@ -98,10 +98,22 @@ androidApp/                   # Android (Jetpack Compose)
 
 ## 当前版本
 
-- **最新版本**: v1.4（2026-05-16）
-- **版本线**: v1.0 → v1.1 → v1.2 → v1.4
+- **最新版本**: v1.5（2026-05-17）
+- **版本线**: v1.0 → v1.1 → v1.2 → v1.4 → v1.5
 
 ## 注意事项
 
 - `memory/` 目录为本地笔记，不纳入版本控制（已在 .gitignore）
 - Java 构建需指定 JAVA_HOME=JDK17（系统默认 JDK8 不兼容 Gradle 8.x）
+
+## 签名密钥
+
+Android release 签名所需文件保存在本机（不纳入版本控制）：
+
+| 项目 | 路径 / 值 |
+|------|----------|
+| Keystore 文件 | `~/.config/ohv/ohv-release.keystore` |
+| Key alias | `ohv` |
+| 密码配置 | `local.properties`（项目根目录，已在 .gitignore） |
+
+> CI/CD（GitHub Actions）使用 Repository Secrets：`SIGNING_KEY_BASE64` / `KEY_ALIAS` / `KEY_PASSWORD`

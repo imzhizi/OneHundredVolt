@@ -1,0 +1,7 @@
+{
+  "versionName": "1.5.0",
+  "versionCode": 5,
+  "tag": "v1.5",
+  "downloadUrl": "https://github.com/imzhizi/OneHundredVolt/releases/download/v1.5/ohv-1.5.0-release.apk",
+  "changelog": "- Android OTA 应用内更新功能\n- 启动时静默检查更新\n- 设置页手动检查更新入口\n- 国内镜像站下载支持"
+}
