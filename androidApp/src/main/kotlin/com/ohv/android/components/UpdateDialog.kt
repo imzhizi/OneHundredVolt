@@ -267,9 +267,10 @@ private fun DownloadCompleteContent(
         Spacer(modifier = Modifier.height(8.dp))
 
         Text(
-            "点击安装，系统会询问是否允许安装",
+            "点击安装，系统会询问是否允许安装未知来源应用；\n如果不想授权，也可以打开系统文件管理器，在「下载」文件夹里找到安装包手动安装。",
             color = OhvColors.SecondaryText,
             fontSize = 13.sp,
+            lineHeight = 20.sp,
             textAlign = TextAlign.Center
         )
 
