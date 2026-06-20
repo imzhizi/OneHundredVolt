@@ -30,10 +30,20 @@ final class AfdianAPIService {
     }
 
     private func clearWebViewCookies() {
+        // v1.6 修复：仅清除 afdian.com 域名下的数据，不影响其他站点。
+        // 原实现 WKWebsiteDataStore.removeData(ofTypes: for: records)
+        // 无差别清空所有站点数据（cookie / 缓存 / IndexedDB 等），会误删
+        // WKWebView 访问过的其他网站（如 GitHub 登录态）。
         let dataStore = WKWebsiteDataStore.default()
         let dataTypes = WKWebsiteDataStore.allWebsiteDataTypes()
         dataStore.fetchDataRecords(ofTypes: dataTypes) { records in
-            dataStore.removeData(ofTypes: dataTypes, for: records) {}
+            // WKWebsiteDataRecord 仅暴露 displayName（域名）属性，
+            // 通过它过滤 afdian 域名即可。
+            let afdianRecords = records.filter { record in
+                record.displayName.lowercased().contains("afdian")
+            }
+            guard !afdianRecords.isEmpty else { return }
+            dataStore.removeData(ofTypes: dataTypes, for: afdianRecords) {}
         }
     }
 
