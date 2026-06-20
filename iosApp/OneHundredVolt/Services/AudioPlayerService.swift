@@ -9,8 +9,9 @@ import SwiftUI
 /// - 播放完成后，当前单集自动从列表移除，自动播放新的 `playlist[0]`
 /// - 手动跳下一首：移除 `playlist[0]`，播放新的 `playlist[0]`
 /// - 手动跳上一首：若进度 > 5s 则重播当前，否则无操作（已移除的不可恢复）
+@MainActor
 @Observable
-final class AudioPlayerService: @unchecked Sendable {
+final class AudioPlayerService {
 
     static let shared = AudioPlayerService()
 
