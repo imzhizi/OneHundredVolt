@@ -1,11 +1,14 @@
 #!/bin/bash
-# Xcode Build Phase 脚本：将 KMP shared 模块编译为 XCFramework 并嵌入 iOS 项目
+# Xcode Build Phase 脚本：将 KMP shared 模块编译为 Framework 并嵌入 iOS 项目
 # 在 Xcode → Build Phases → Run Script 中添加此脚本
 #
 # 使用方法：
 # 1. 在 Xcode 项目中添加 Run Script Build Phase（放在 Compile Sources 之前）
-# 2. 脚本内容：bash "$SRCROOT/../embed_shared_framework.sh"
+# 2. 脚本内容：bash "$SRCROOT/../scripts/build-shared-framework.sh"
 # 3. 取消勾选 "Based on dependency analysis"（每次都运行）
+#
+# v1.6 起该脚本将替换为 SPM binaryTarget 引用 Shared.xcframework（见 plans/v1.6）
+# 本脚本作为过渡期使用。
 
 set -e
 

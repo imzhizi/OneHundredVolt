@@ -12,6 +12,8 @@ kotlin {
         @OptIn(ExperimentalKotlinGradlePluginApi::class)
         compilerOptions {
             jvmTarget.set(JvmTarget.JVM_11)
+            // expect/actual classes 已稳定（Kotlin 2.1+），关闭 Beta 警告
+            freeCompilerArgs.add("-Xexpect-actual-classes")
         }
     }
 
@@ -23,6 +25,10 @@ kotlin {
         iosTarget.binaries.framework {
             baseName = "Shared"
             isStatic = true
+        }
+        iosTarget.compilerOptions {
+            // expect/actual classes 已稳定（Kotlin 2.1+），关闭 Beta 警告
+            freeCompilerArgs.add("-Xexpect-actual-classes")
         }
     }
 
@@ -39,6 +45,10 @@ kotlin {
             implementation(libs.ktor.client.content.negotiation)
             implementation(libs.ktor.serialization.kotlinx.json)
             implementation(libs.ktor.client.logging)
+        }
+        commonTest.dependencies {
+            implementation(libs.kotlin.test)
+            implementation(libs.kotlinx.coroutines.test)
         }
         androidMain.dependencies {
             implementation(libs.ktor.client.okhttp)

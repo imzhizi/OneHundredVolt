@@ -42,6 +42,7 @@ class OhvApplication : Application() {
         checkUpdateOnLaunch()
     }
 
+    @Suppress("DEPRECATION")
     private fun checkUpdateOnLaunch() {
         val currentVersionCode = try {
             packageManager.getPackageInfo(packageName, 0).versionCode

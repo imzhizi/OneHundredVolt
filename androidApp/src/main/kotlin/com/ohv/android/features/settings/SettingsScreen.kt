@@ -7,6 +7,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.Login
 import androidx.compose.material.icons.automirrored.filled.Logout
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
@@ -84,9 +85,7 @@ fun SettingsScreen(
     LaunchedEffect(Unit) {
         cacheSizeBytes = calculateCacheSize()
         // 获取当前版本信息
-        currentVersionCode = try {
-            appContext.packageManager.getPackageInfo(appContext.packageName, 0).versionCode
-        } catch (_: Exception) { 0 }
+        currentVersionCode = readVersionCode(appContext)
         currentVersionName = try {
             appContext.packageManager.getPackageInfo(appContext.packageName, 0).versionName ?: ""
         } catch (_: Exception) { "" }
@@ -100,9 +99,7 @@ fun SettingsScreen(
         updateCheckStatus = "checking"
         try {
             // 实时读取 versionCode，确保不拿到初始值 0
-            val versionCode = try {
-                appContext.packageManager.getPackageInfo(appContext.packageName, 0).versionCode
-            } catch (_: Exception) { 0 }
+            val versionCode = readVersionCode(appContext)
             val result = AppUpdater.checkForUpdate(versionCode)
             if (result != null) {
                 showUpdateDialog = result
@@ -185,7 +182,7 @@ fun SettingsScreen(
                     )
                 } else {
                     SettingsButton(
-                        icon = Icons.Default.Login,
+                        icon = Icons.AutoMirrored.Filled.Login,
                         label = "重新登录",
                         labelColor = OhvColors.Accent,
                         iconTint = OhvColors.Accent,
@@ -482,6 +479,21 @@ private fun SettingsButton(
 }
 
 // ─── 日期格式化 ───────────────────────────────────────────────────────────────
+
+/**
+ * 读取当前 App 的 versionCode（Int）。
+ *
+ * PackageInfo.versionCode 在 API 34+ 被 deprecated（应用可能 > 2^31-1），
+ * 推荐改用 PackageInfoCompat.getLongVersionCode 返回 Long。
+ * 本工程 versionCode 远小于 Int 上限，且 AppUpdater 接口签名固定为 Int，
+ * 故用 @Suppress("DEPRECATION") 容忍警告，避免引入 core-ktx 直接依赖。
+ */
+@Suppress("DEPRECATION")
+private fun readVersionCode(context: android.content.Context): Int = try {
+    context.packageManager.getPackageInfo(context.packageName, 0).versionCode
+} catch (_: Exception) {
+    0
+}
 
 private fun formatDate(epochMs: Long): String {
     val sdf = SimpleDateFormat("MM-dd HH:mm", Locale.getDefault())
