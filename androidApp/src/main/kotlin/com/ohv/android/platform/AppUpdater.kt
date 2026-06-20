@@ -1,10 +1,12 @@
 package com.ohv.android.platform
 
+import android.content.ContentValues
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.os.Build
 import android.os.Environment
+import android.provider.MediaStore
 import androidx.core.content.FileProvider
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
@@ -16,6 +18,7 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.io.File
 import java.io.IOException
+import java.util.UUID
 import java.util.concurrent.TimeUnit
 
 /**
@@ -25,6 +28,13 @@ import java.util.concurrent.TimeUnit
  * 1. 通过 GitHub API 检测最新版本
  * 2. 从国内镜像站下载 APK（带进度回调）
  * 3. 触发系统安装器安装新版本
+ *
+ * v1.6 改动：
+ * 1. Android 10+ (API 29) 使用 MediaStore.Downloads 写入公共 Downloads 目录，
+ *    兼容 scoped storage；旧 API 用 Environment.getExternalStoragePublicDirectory()
+ *    在 Android 10+ 会 EACCES 失败。
+ * 2. Android 9 及以下用 UUID 文件名（update-<uuid>.apk）防止并发重试竞态。
+ *    Android 10+ MediaStore 自动生成唯一文件名，无需 UUID。
  */
 object AppUpdater {
 
@@ -40,8 +50,10 @@ object AppUpdater {
         "https://raw.githubusercontent.com/$REPO/main/version.json"
     )
 
+    // 旧版（Android 9 及以下）下载目录的子目录名
     private const val UPDATE_DIR = "updates"
-    private const val APK_FILE_NAME = "update.apk"
+    // 旧版文件名（保留以兼容旧版本检查 / 清理场景；新版使用 UUID 文件名）
+    private const val LEGACY_APK_FILE_NAME = "update.apk"
 
     private val json = Json { ignoreUnknownKeys = true }
 
@@ -51,6 +63,18 @@ object AppUpdater {
         .writeTimeout(30, TimeUnit.SECONDS)
         .followRedirects(true)
         .build()
+
+    /**
+     * Android 10+ (API 29) 保存的最新 APK 的 MediaStore URI。
+     * 用于在 downloadApk → getDownloadedApk → installApk 之间传递下载产物。
+     */
+    private var lastDownloadUri: Uri? = null
+
+    /**
+     * 旧版（Android 9 及以下）的下载路径。
+     * 每次下载生成新的 UUID 文件，避免并发重试竞态。
+     */
+    private var lastLegacyFile: File? = null
 
     // ── 数据模型 ────────────────────────────────────────────────────────
 
@@ -151,7 +175,12 @@ object AppUpdater {
     }
 
     /**
-     * 下载 APK 文件到外部存储，主 URL 失败自动降级到镜像。
+     * 下载 APK 文件，主 URL 失败自动降级到镜像。
+     *
+     * - Android 10+ (API 29)：使用 MediaStore.Downloads 写入公共 Downloads，
+     *   自动生成唯一文件名，兼容 scoped storage。
+     * - Android 9 及以下：写入 app 私有目录（Context.getExternalFilesDir）下的
+     *   updates/ 子目录，文件名带 UUID 防止并发重试竞态。
      *
      * @param context Context
      * @param url 来自 version.json 的主下载地址
@@ -179,30 +208,19 @@ object AppUpdater {
 
                 val contentLength = body.contentLength()
 
-                // 下载到公共 Downloads 目录，文件管理器可见，安装器也可直接访问
-                val downloadsDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
-                downloadsDir.mkdirs()
-                val apkFile = File(downloadsDir, APK_FILE_NAME)
-
-                // 清理旧文件
-                if (apkFile.exists()) apkFile.delete()
-
-                var downloaded = 0L
-                body.byteStream().use { input ->
-                    apkFile.outputStream().use { output ->
-                        val buffer = ByteArray(8192)
-                        while (true) {
-                            val read = input.read(buffer)
-                            if (read == -1) break
-                            output.write(buffer, 0, read)
-                            downloaded += read
-                            emit(DownloadProgress(downloaded, contentLength))
-                        }
-                        output.flush()
+                val finalBytes = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    // Android 10+：通过 MediaStore 写入公共 Downloads 目录
+                    downloadViaMediaStore(context, body.byteStream(), contentLength) { downloaded ->
+                        emit(DownloadProgress(downloaded, contentLength))
+                    }
+                } else {
+                    // Android 9 及以下：写入 app 私有目录 + UUID 文件名
+                    downloadViaFile(context, body.byteStream(), contentLength) { downloaded ->
+                        emit(DownloadProgress(downloaded, contentLength))
                     }
                 }
 
-                emit(DownloadProgress(contentLength.coerceAtLeast(downloaded), contentLength, done = true))
+                emit(DownloadProgress(finalBytes, contentLength, done = true))
                 return@flow  // 下载成功，退出
             } catch (e: IOException) {
                 lastError = e
@@ -216,41 +234,165 @@ object AppUpdater {
     }.flowOn(Dispatchers.IO)
 
     /**
-     * 取消正在进行的下载（删除不完整文件）。
+     * Android 10+：通过 MediaStore.Downloads 写入公共 Downloads 目录。
+     * 自动生成唯一文件名，scoped storage 下也能写入。
+     *
+     * @return 最终写入字节数
      */
-    fun cancelDownload(context: Context) {
-        getApkFile().delete()
+    private suspend fun downloadViaMediaStore(
+        context: Context,
+        input: java.io.InputStream,
+        contentLength: Long,
+        emitProgress: suspend (Long) -> Unit
+    ): Long {
+        val resolver = context.contentResolver
+        val fileName = "ohv-update-${UUID.randomUUID()}.apk"
+
+        val values = ContentValues().apply {
+            put(MediaStore.Downloads.DISPLAY_NAME, fileName)
+            put(MediaStore.Downloads.MIME_TYPE, "application/vnd.android.package-archive")
+            put(MediaStore.Downloads.IS_PENDING, 1)
+        }
+
+        val collection = MediaStore.Downloads.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
+        val uri = resolver.insert(collection, values)
+            ?: throw IOException("Failed to create MediaStore entry")
+
+        try {
+            val downloaded = resolver.openOutputStream(uri)?.use { output ->
+                val buffer = ByteArray(8192)
+                var total = 0L
+                while (true) {
+                    val read = input.read(buffer)
+                    if (read == -1) break
+                    output.write(buffer, 0, read)
+                    total += read
+                    emitProgress(total)
+                }
+                output.flush()
+                total
+            } ?: throw IOException("Failed to open output stream for $uri")
+
+            // 标记下载完成，对其他 app 可见
+            val finalValues = ContentValues().apply {
+                put(MediaStore.Downloads.IS_PENDING, 0)
+            }
+            resolver.update(uri, finalValues, null, null)
+
+            lastDownloadUri = uri
+            return downloaded
+        } catch (e: Exception) {
+            // 失败时清理未完成的 MediaStore 条目
+            try { resolver.delete(uri, null, null) } catch (_: Exception) {}
+            throw e
+        }
     }
 
     /**
-     * 获取已下载的 APK 文件（如果存在且完整）。
+     * Android 9 及以下：写入 app 私有目录（Context.getExternalFilesDir），
+     * 文件名带 UUID 防止并发重试竞态。
+     *
+     * @return 最终写入字节数
      */
-    fun getDownloadedApk(context: Context): File? {
-        val file = getApkFile()
-        return if (file.exists() && file.length() > 100_000) file else null
+    private suspend fun downloadViaFile(
+        context: Context,
+        input: java.io.InputStream,
+        contentLength: Long,
+        emitProgress: suspend (Long) -> Unit
+    ): Long {
+        val baseDir = context.getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS)
+            ?: context.filesDir
+        val updateDir = File(baseDir, UPDATE_DIR).apply { mkdirs() }
+        val apkFile = File(updateDir, "update-${UUID.randomUUID()}.apk")
+
+        // 清理旧文件（仅清理本应用的旧下载）
+        updateDir.listFiles()?.forEach { it.delete() }
+
+        try {
+            val downloaded = apkFile.outputStream().use { output ->
+                val buffer = ByteArray(8192)
+                var total = 0L
+                while (true) {
+                    val read = input.read(buffer)
+                    if (read == -1) break
+                    output.write(buffer, 0, read)
+                    total += read
+                    emitProgress(total)
+                }
+                output.flush()
+                total
+            }
+
+            lastLegacyFile = apkFile
+            return downloaded
+        } catch (e: Exception) {
+            apkFile.delete()
+            throw e
+        }
     }
 
-    private fun getApkFile(): File {
-        val downloadsDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
-        return File(downloadsDir, APK_FILE_NAME)
+    /**
+     * 取消正在进行的下载（删除不完整文件）。
+     */
+    fun cancelDownload(context: Context) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            lastDownloadUri?.let {
+                try {
+                    context.contentResolver.delete(it, null, null)
+                } catch (_: Exception) {
+                }
+            }
+            lastDownloadUri = null
+        } else {
+            lastLegacyFile?.delete()
+            lastLegacyFile = null
+        }
+    }
+
+    /**
+     * 获取已下载的 APK 的 Uri（ContentResolver URI 或 FileProvider URI）。
+     * 返回 null 表示未下载或已删除。
+     */
+    fun getDownloadedApk(context: Context): Uri? {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            // Android 10+：返回 MediaStore URI，但需要验证文件还在
+            val uri = lastDownloadUri ?: return null
+            return try {
+                context.contentResolver.query(uri, null, null, null, null)?.use {
+                    if (it.moveToFirst()) uri else null
+                } ?: null
+            } catch (_: Exception) {
+                null
+            }
+        } else {
+            // Android 9 及以下：返回 FileProvider URI（基于 lastLegacyFile）
+            val file = lastLegacyFile?.takeIf { it.exists() && it.length() > 100_000 }
+                ?: return null
+            return try {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                    FileProvider.getUriForFile(
+                        context,
+                        "${context.packageName}.fileprovider",
+                        file
+                    )
+                } else {
+                    Uri.fromFile(file)
+                }
+            } catch (_: Exception) {
+                null
+            }
+        }
     }
 
     // ── 安装触发 ───────────────────────────────────────────────────────
 
     /**
      * 触发系统安装器安装已下载的 APK。
+     *
+     * @param context Context
+     * @param uri 已下载 APK 的 Uri（来自 getDownloadedApk）
      */
-    fun installApk(context: Context, apkFile: File) {
-        val uri = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-            FileProvider.getUriForFile(
-                context,
-                "${context.packageName}.fileprovider",
-                apkFile
-            )
-        } else {
-            Uri.fromFile(apkFile)
-        }
-
+    fun installApk(context: Context, uri: Uri) {
         val intent = Intent(Intent.ACTION_VIEW).apply {
             setDataAndType(uri, "application/vnd.android.package-archive")
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_GRANT_READ_URI_PERMISSION
@@ -260,5 +402,4 @@ object AppUpdater {
         }
         context.startActivity(intent)
     }
-
 }

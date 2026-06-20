@@ -7,9 +7,11 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
-    <!-- 写公共 Downloads 目录（Android 9 及以下需要，10+ 免申请） -->
-    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE"
-        android:maxSdkVersion="28" />
+    <!--
+        v1.6 改动：删除 WRITE_EXTERNAL_STORAGE 声明。
+        - Android 10+ 用 MediaStore.Downloads 写入公共 Downloads（无需权限）
+        - Android 9- 用 context.getExternalFilesDir()（app 私有外部存储，无需权限）
+    -->
 
     <application
         android:name=".OhvApplication"

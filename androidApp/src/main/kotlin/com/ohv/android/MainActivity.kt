@@ -15,10 +15,10 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.core.content.ContextCompat
 import androidx.core.view.WindowCompat
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.ohv.android.components.UpdateDialog
 import com.ohv.android.features.navigation.AppNavHost
 import com.ohv.android.theme.OhvTheme
-import com.ohv.shared.platform.SecureStorage
 
 class MainActivity : ComponentActivity() {
 
@@ -54,15 +54,15 @@ class MainActivity : ComponentActivity() {
                         .fillMaxSize()
                         .systemBarsPadding()
                 ) {
-                    val secureStorage = remember { SecureStorage() }
-                    val hasToken = remember {
-                        mutableStateOf(secureStorage.get("afdian_auth_token") != null)
-                    }
+                    // v1.6：从 StateFlow 读取 hasToken，避免主线程直接读 EncryptedSharedPreferences
+                    // 导致冷启动卡顿（首次访问需解密 master key，50-200ms）。
+                    // OhvApplication.onCreate 在 IO 线程预读并更新 StateFlow。
+                    val hasToken by OhvApplication.hasToken.collectAsStateWithLifecycle()
 
                     AppNavHost(
-                        isLoggedIn = hasToken.value,
-                        onLoginComplete = { hasToken.value = true },
-                        onLogout = { hasToken.value = false }
+                        isLoggedIn = hasToken,
+                        onLoginComplete = { OhvApplication.setLoggedIn(true) },
+                        onLogout = { OhvApplication.setLoggedIn(false) }
                     )
 
                     // 启动时更新弹窗（频率控制在 OhvApplication 里）

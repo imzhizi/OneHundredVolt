@@ -5,7 +5,9 @@ import android.util.Log
 import com.ohv.shared.platform.AndroidContext
 import com.ohv.android.platform.AudioPlayerManager
 import com.ohv.android.platform.AppUpdater
+import com.ohv.shared.api.AfdianApiService
 import com.ohv.shared.platform.KeyValueStore
+import com.ohv.shared.platform.SecureStorage
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -13,6 +15,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 class OhvApplication : Application() {
 
@@ -20,6 +23,21 @@ class OhvApplication : Application() {
         // 启动时检测到的待更新信息，MainActivity 订阅后弹窗
         private val _pendingUpdate = MutableStateFlow<AppUpdater.UpdateInfo?>(null)
         val pendingUpdate: StateFlow<AppUpdater.UpdateInfo?> = _pendingUpdate.asStateFlow()
+
+        /**
+         * v1.6 改动：是否已登录 auth_token，从 SecureStorage 异步加载
+         * （避免 MainActivity 冷启动时主线程读 EncryptedSharedPreferences 卡 50-200ms）。
+         *
+         * 初始值为 false，Application.onCreate 后立即在 IO 线程读取并 emit 新值。
+         * MainActivity 通过 collectAsStateWithLifecycle 订阅本 StateFlow。
+         */
+        private val _hasToken = MutableStateFlow(false)
+        val hasToken: StateFlow<Boolean> = _hasToken.asStateFlow()
+
+        /** 登录成功后由 LoginWebViewScreen 调用 */
+        fun setLoggedIn(loggedIn: Boolean) {
+            _hasToken.value = loggedIn
+        }
 
         /** 弹窗显示后调用，清除 pending 状态 */
         fun consumePendingUpdate() {
@@ -34,11 +52,22 @@ class OhvApplication : Application() {
 
     private val appScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val kvStore by lazy { KeyValueStore() }
+    private val secureStorage by lazy { SecureStorage() }
 
     override fun onCreate() {
         super.onCreate()
         AndroidContext.init(this)
         AudioPlayerManager.init(this)
+
+        // v1.6：在 IO 线程异步预读 token，避免 MainActivity 主线程首次访问
+        // EncryptedSharedPreferences 时的 50-200ms 卡顿（首次访问需解密 master key）
+        appScope.launch {
+            val token = withContext(Dispatchers.IO) {
+                secureStorage.get(AfdianApiService.AUTH_TOKEN_KEY)
+            }
+            _hasToken.value = token != null
+        }
+
         checkUpdateOnLaunch()
     }
 

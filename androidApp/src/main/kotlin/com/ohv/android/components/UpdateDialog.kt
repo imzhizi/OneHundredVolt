@@ -92,9 +92,9 @@ fun UpdateDialog(
                         } else true
 
                         if (canInstall) {
-                            val apkFile = AppUpdater.getDownloadedApk(context)
-                            if (apkFile != null) {
-                                AppUpdater.installApk(context, apkFile)
+                            val apkUri = AppUpdater.getDownloadedApk(context)
+                            if (apkUri != null) {
+                                AppUpdater.installApk(context, apkUri)
                                 onInstallReady()
                             }
                         } else {

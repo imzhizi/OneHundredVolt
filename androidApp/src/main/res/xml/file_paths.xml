@@ -1,5 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
 <paths>
-    <!-- 公共 Downloads 目录，用于 OTA 安装包 -->
-    <external-path name="downloads" path="Download/" />
+    <!--
+        v1.6 改动：
+        - Android 10+ (API 29) 使用 MediaStore.Downloads 写入公共 Downloads，
+          不再需要 FileProvider（installApk 直接传 content:// URI 即可）。
+        - Android 9 及以下写到 app 私有 external-files-path，
+          通过 FileProvider 暴露给系统安装器。
+    -->
+    <external-files-path name="updates" path="Download/" />
 </paths>

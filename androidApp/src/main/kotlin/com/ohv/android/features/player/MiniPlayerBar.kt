@@ -9,6 +9,7 @@ import androidx.compose.material.icons.automirrored.filled.FormatListBulleted
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.SkipNext
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.Text
@@ -45,8 +46,11 @@ fun MiniPlayerBar(
     val player = AudioPlayerManager.shared
     val state by player.state.collectAsState()
 
-    // playingItem 仅在 STATE_READY 时更新，保证迷你播放条与实际播放内容始终对齐
-    val currentItem = state.playingItem ?: return
+    // v1.6 修复：使用 currentItem（= loadingItem ?: playingItem）而非仅 playingItem，
+    // 保证点击新条目后迷你播放条立即出现，不会因 loading 阶段 playingItem == null
+    // 而短暂消失。HomeScreen 仅在 hasCurrentItem == true 时挂载 MiniPlayerBar，
+    // 故这里 currentItem 不会为 null，可以安全 !! 断言。
+    val currentItem = state.currentItem ?: return
 
     Column(
         modifier = modifier
@@ -115,17 +119,25 @@ fun MiniPlayerBar(
                 modifier = Modifier.weight(1f)
             )
 
-            // 播放/暂停
+            // 播放/暂停：loading 时显示旋转图标，点击无效
             IconButton(
-                onClick = { player.togglePlayPause() },
+                onClick = { if (!state.isLoading) player.togglePlayPause() },
                 modifier = Modifier.size(40.dp)
             ) {
-                Icon(
-                    imageVector = if (state.isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
-                    contentDescription = if (state.isPlaying) "暂停" else "播放",
-                    tint = OhvColors.White,
-                    modifier = Modifier.size(24.dp)
-                )
+                if (state.isLoading) {
+                    CircularProgressIndicator(
+                        modifier = Modifier.size(20.dp),
+                        color = OhvColors.White,
+                        strokeWidth = 2.dp
+                    )
+                } else {
+                    Icon(
+                        imageVector = if (state.isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
+                        contentDescription = if (state.isPlaying) "暂停" else "播放",
+                        tint = OhvColors.White,
+                        modifier = Modifier.size(24.dp)
+                    )
+                }
             }
 
             // 下一首
