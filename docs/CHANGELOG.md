@@ -4,6 +4,74 @@
 
 ---
 
+## v1.6 — 跨平台对齐 + Bug 修复
+
+> 状态：📋 计划中
+> 日期：2026-06-20
+> 平台：iOS / Android / Shared
+> 对应文档：`plans/v1.6-cross-platform-review.md`、`architecture.md`
+
+### 共享层（Shared Module）
+
+| # | 模块 | 说明 |
+|---|------|------|
+| 1 | iOS 接入 Shared.framework | iOS Xcode 接入 KMP 共享模块，删除 ~1100 行 Swift 重复代码（Models / DatabaseService / SyncService / AfdianApiService / PlaybackProgressStore / KeychainService） |
+| 2 | DatabaseService 原子写 | JSON 文件改临时文件 + rename 原子写入；防抖调度改 AtomicBoolean；损坏恢复保留 .corrupt 文件 |
+| 3 | 跨平台基础设施 | 新增 WebSessionCleaner expect/actual；Ktor 加 HttpTimeout；KeyValueStore Android 端 .commit() → .apply() |
+
+### 播放器
+
+| # | 平台 | 说明 |
+|---|------|------|
+| 4 | iOS | AudioPlayerService 改 @MainActor；moveItem 用 replaceCurrentItem 避免 1s 静音 |
+| 5 | Android | AudioPlayerManager 改 MediaController.buildAsync 异步绑定（替换魔法 delay 800ms）；进度轮询降频到 1Hz |
+| 6 | 两侧 | MiniPlayerBar loading 阶段渲染当前项（修复 Android 空白 bug）；iOS Now Playing 封面 race 修复 |
+
+### 缓存
+
+| # | 平台 | 说明 |
+|---|------|------|
+| 7 | iOS | AudioCacheService 加 per-postId NSLock 修并发下载 race；cacheAudio 支持可取消 |
+| 8 | iOS | SettingsView.clearData 同步清音频缓存（对齐 logout 行为） |
+| 9 | Android | SettingsScreen 清空缓存改用 AudioCacheService.clearCache()；size label 只算 AudioCache/ 子目录 |
+| 10 | Android | AppUpdater 文件名加 UUID 修并发重试竞态 |
+
+### 认证
+
+| # | 平台 | 说明 |
+|---|------|------|
+| 11 | iOS | logout 清 WKWebView cookies 按域名过滤（不再误删其他站点） |
+| 12 | Android | MainActivity 移到 IO 线程预热 EncryptedSharedPreferences（修冷启动卡顿） |
+
+### 通知
+
+| # | 平台 | 说明 |
+|---|------|------|
+| 13 | Android | 加 POST_NOTIFICATIONS 运行时权限；自定义 MediaNotificationProvider（小图标 + channel） |
+| 14 | iOS | Now Playing 封面预生成 + 缓存，避免每曲 HTTP 拉封面 |
+
+### 同步
+
+| # | 平台 | 说明 |
+|---|------|------|
+| 15 | iOS | SyncService 第一个 album probe 不再 sleep 500ms |
+| 16 | 共享 | probeAlbumAccessibility 区分 transport error 和 has_right=false，避免网络抖动永久误标 |
+
+### 架构
+
+| # | 说明 |
+|---|-----|
+| 17 | 新增 `docs/architecture.md`：明确共享 / iOS 独立 / Android 独立三层边界；记录计划保持的平台差异清单（AVFoundation vs Media3、Keychain vs EncryptedSharedPreferences 等） |
+
+### 用户决策（不在本计划范围）
+
+| 决策 | 内容 |
+|---|---|
+| iOS OTA | 不做 |
+| Android 响度 UI 开关 | 不做（API 保留，默认 true） |
+
+---
+
 ## v1.5 — Android OTA 应用内更新
 
 > 状态：✅ 已实现
