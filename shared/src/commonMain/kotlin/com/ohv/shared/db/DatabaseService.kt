@@ -5,23 +5,34 @@ import com.ohv.shared.models.AudioItem
 import com.ohv.shared.models.Creator
 import com.ohv.shared.platform.getDocumentsDir
 import kotlinx.coroutines.*
-import kotlinx.serialization.Serializable
-import kotlinx.serialization.encodeToString
-import kotlinx.serialization.json.Json
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.Json
+import java.io.File
+import java.io.FileOutputStream
+import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * 本地数据库服务（JSON 文件 + 内存缓存）
  * 移植自 iOS DatabaseService.swift
- * @Observable → StateFlow
- * DispatchQueue → Coroutines IO dispatcher
+ *
+ * v1.6 改动：
+ * 1. upsert/delete 改用 StateFlow.update {} 保证 read-modify-write 原子性
+ * 2. 防抖改用 AtomicBoolean.compareAndSet 保证线程安全
+ * 3. 文件写入改 temp + rename 原子写入（POSIX rename 原子，Windows fallback）
+ * 4. 加载失败时把损坏文件改名为 .corrupt.<ts> 保留
+ * 5. 启动时清理上次崩溃遗留的 .tmp 文件
+ * 6. 构造函数接受 documentsDir 参数以便单元测试使用临时目录
  */
-class DatabaseService {
+class DatabaseService(documentsDir: String = getDocumentsDir()) {
 
     companion object {
-        val shared = DatabaseService()
+        // 延迟初始化：避免单元测试加载类时触发 getDocumentsDir() 调用
+        val shared: DatabaseService by lazy { DatabaseService() }
     }
 
     // ─── 内存存储（StateFlow 供 UI 观察）────────────────────────────────────
@@ -36,11 +47,13 @@ class DatabaseService {
     val audioItems: StateFlow<List<AudioItem>> = _audioItems.asStateFlow()
 
     private val dbFilePath: String by lazy {
-        "${getDocumentsDir()}/ohv_db.json"
+        "$documentsDir/ohv_db.json"
     }
 
     private val ioScope = CoroutineScope(Dispatchers.Default + SupervisorJob())
-    private var pendingSave = false
+
+    // 防抖：compareAndSet 保证并发场景下只有一个协程进入
+    private val pendingSave = AtomicBoolean(false)
 
     private val json = Json {
         ignoreUnknownKeys = true
@@ -54,27 +67,31 @@ class DatabaseService {
     // ─── Creator CRUD ─────────────────────────────────────────────────────────
 
     fun upsertCreator(creator: Creator) {
-        val list = _creators.value.toMutableList()
-        val idx = list.indexOfFirst { it.id == creator.id }
-        if (idx >= 0) list[idx] = creator else list.add(creator)
-        _creators.value = list
+        _creators.update { current ->
+            val list = current.toMutableList()
+            val idx = list.indexOfFirst { it.id == creator.id }
+            if (idx >= 0) list[idx] = creator else list.add(creator)
+            list
+        }
         scheduleSave()
     }
 
     fun upsertCreators(list: List<Creator>) {
-        val current = _creators.value.toMutableList()
-        for (c in list) {
-            val idx = current.indexOfFirst { it.id == c.id }
-            if (idx >= 0) current[idx] = c else current.add(c)
+        _creators.update { current ->
+            val mutable = current.toMutableList()
+            for (c in list) {
+                val idx = mutable.indexOfFirst { it.id == c.id }
+                if (idx >= 0) mutable[idx] = c else mutable.add(c)
+            }
+            mutable
         }
-        _creators.value = current
         scheduleSave()
     }
 
     fun deleteCreator(id: String) {
-        _creators.value = _creators.value.filter { it.id != id }
-        _albums.value = _albums.value.filter { it.creatorId != id }
-        _audioItems.value = _audioItems.value.filter { it.creatorId != id }
+        _creators.update { it.filter { c -> c.id != id } }
+        _albums.update { it.filter { a -> a.creatorId != id } }
+        _audioItems.update { it.filter { i -> i.creatorId != id } }
         scheduleSave()
     }
 
@@ -83,20 +100,24 @@ class DatabaseService {
     // ─── Album CRUD ───────────────────────────────────────────────────────────
 
     fun upsertAlbum(album: Album) {
-        val list = _albums.value.toMutableList()
-        val idx = list.indexOfFirst { it.id == album.id }
-        if (idx >= 0) list[idx] = album else list.add(album)
-        _albums.value = list
+        _albums.update { current ->
+            val list = current.toMutableList()
+            val idx = list.indexOfFirst { it.id == album.id }
+            if (idx >= 0) list[idx] = album else list.add(album)
+            list
+        }
         scheduleSave()
     }
 
     fun upsertAlbums(list: List<Album>) {
-        val current = _albums.value.toMutableList()
-        for (a in list) {
-            val idx = current.indexOfFirst { it.id == a.id }
-            if (idx >= 0) current[idx] = a else current.add(a)
+        _albums.update { current ->
+            val mutable = current.toMutableList()
+            for (a in list) {
+                val idx = mutable.indexOfFirst { it.id == a.id }
+                if (idx >= 0) mutable[idx] = a else mutable.add(a)
+            }
+            mutable
         }
-        _albums.value = current
         scheduleSave()
     }
 
@@ -106,31 +127,35 @@ class DatabaseService {
     // ─── AudioItem CRUD ───────────────────────────────────────────────────────
 
     fun upsertAudioItem(item: AudioItem) {
-        val list = _audioItems.value.toMutableList()
-        val idx = list.indexOfFirst { it.id == item.id }
-        if (idx >= 0) {
-            // 保留已缓存的 audioUrl
-            val updated = item.copy().also { it.audioUrl = list[idx].audioUrl }
-            list[idx] = updated
-        } else {
-            list.add(item)
+        _audioItems.update { current ->
+            val list = current.toMutableList()
+            val idx = list.indexOfFirst { it.id == item.id }
+            if (idx >= 0) {
+                // 保留已缓存的 audioUrl
+                val updated = item.copy().also { it.audioUrl = list[idx].audioUrl }
+                list[idx] = updated
+            } else {
+                list.add(item)
+            }
+            list
         }
-        _audioItems.value = list
         scheduleSave()
     }
 
     fun upsertAudioItems(items: List<AudioItem>) {
-        val current = _audioItems.value.toMutableList()
-        for (item in items) {
-            val idx = current.indexOfFirst { it.id == item.id }
-            if (idx >= 0) {
-                val updated = item.copy().also { it.audioUrl = current[idx].audioUrl }
-                current[idx] = updated
-            } else {
-                current.add(item)
+        _audioItems.update { current ->
+            val mutable = current.toMutableList()
+            for (item in items) {
+                val idx = mutable.indexOfFirst { it.id == item.id }
+                if (idx >= 0) {
+                    val updated = item.copy().also { it.audioUrl = mutable[idx].audioUrl }
+                    mutable[idx] = updated
+                } else {
+                    mutable.add(item)
+                }
             }
+            mutable
         }
-        _audioItems.value = current
         scheduleSave()
     }
 
@@ -146,11 +171,12 @@ class DatabaseService {
         _creators.value = emptyList()
         _albums.value = emptyList()
         _audioItems.value = emptyList()
-        pendingSave = false
+        pendingSave.set(false)
         ioScope.launch {
             try {
-                java.io.File(dbFilePath).delete()
-            } catch (_: Exception) {}
+                File(dbFilePath).delete()
+            } catch (_: Exception) {
+            }
         }
     }
 
@@ -163,17 +189,32 @@ class DatabaseService {
         val audioItems: List<AudioItem>
     )
 
+    /**
+     * 调度一次磁盘写入。100ms 防抖窗口内多次调用只触发一次。
+     *
+     * 线程安全：使用 AtomicBoolean.compareAndSet 确保并发场景下
+     * 只有一个协程能成功进入调度逻辑，避免双重写入。
+     */
     private fun scheduleSave() {
-        if (pendingSave) return
-        pendingSave = true
+        if (!pendingSave.compareAndSet(false, true)) return
         ioScope.launch {
             delay(100)
-            flushToDisk()
+            try {
+                flushToDisk()
+            } finally {
+                // 写完后再清 pending，允许后续 mutation 重新调度
+                pendingSave.set(false)
+            }
         }
     }
 
-    private fun flushToDisk() {
-        pendingSave = false
+    /**
+     * 立即将内存状态写入磁盘（原子写入）。
+     *
+     * 调用方负责线程切换（应在 IO 调度器上调用）。
+     */
+    internal fun flushToDisk() {
+        // 在拿锁之外先读 StateFlow 值，避免持锁期间长时间阻塞其他 reader
         val snapshot = DbSnapshot(
             creators = _creators.value,
             albums = _albums.value,
@@ -181,30 +222,90 @@ class DatabaseService {
         )
         try {
             val data = json.encodeToString(snapshot)
-            writeFile(dbFilePath, data)
-        } catch (_: Exception) {}
+            writeFileAtomic(dbFilePath, data)
+        } catch (e: Exception) {
+            // 写入失败不抛异常（用户无感），下次 scheduleSave 会重试
+            println("DatabaseService.flushToDisk failed: $e")
+        }
     }
 
+    /**
+     * 启动时加载磁盘数据。
+     *
+     * 若文件损坏（JSON 解析失败），把原文件改名为 .corrupt.<ts> 保留，
+     * 用户后续可手动恢复。损坏文件不删除，避免数据彻底丢失。
+     *
+     * 不论加载成功与否，都会清理遗留的 .tmp 文件。
+     */
     private fun load() {
         try {
-            val data = readFile(dbFilePath) ?: return
-            val snapshot = json.decodeFromString<DbSnapshot>(data)
-            _creators.value = snapshot.creators
-            _albums.value = snapshot.albums
-            _audioItems.value = snapshot.audioItems
-        } catch (_: Exception) {}
+            val data = readFile(dbFilePath)
+            if (data != null) {
+                val snapshot = json.decodeFromString<DbSnapshot>(data)
+                _creators.value = snapshot.creators
+                _albums.value = snapshot.albums
+                _audioItems.value = snapshot.audioItems
+            }
+        } catch (e: Exception) {
+            // JSON 损坏：保留原文件供用户手动恢复
+            try {
+                val corrupt = File("${dbFilePath}.corrupt.${System.currentTimeMillis()}")
+                File(dbFilePath).renameTo(corrupt)
+            } catch (_: Exception) {
+            }
+        }
+        // 无论加载成功与否，都清理遗留 .tmp（必须在 try/catch 外面，否则 db 文件不存在时不会执行）
+        cleanupTempFiles()
     }
 
-    // ─── 文件 IO（纯 Kotlin，跨平台）─────────────────────────────────────────
+    /**
+     * 清理上次崩溃遗留的 .tmp 文件。
+     * 通常发生在 SIGKILL 或断电场景。
+     */
+    private fun cleanupTempFiles() {
+        val target = File(dbFilePath)
+        val dir = target.parentFile ?: return
+        val prefix = "${target.name}.tmp."
+        dir.listFiles { f -> f.name.startsWith(prefix) }?.forEach { it.delete() }
+    }
 
-    private fun writeFile(path: String, content: String) {
-        val file = java.io.File(path)
-        file.parentFile?.mkdirs()
-        file.writeText(content, Charsets.UTF_8)
+    // ─── 文件 IO（原子写入）─────────────────────────────────────────────────
+
+    /**
+     * 原子写入文件：先写到临时文件，再 rename 到目标路径。
+     *
+     * - POSIX 系统（Linux / macOS / iOS / Android）：rename 原子，旧文件保持完整
+     * - Windows：renameTo 失败时 fallback 到 copyTo + delete
+     * - 临时文件名带 PID + nanoTime，避免并发写入冲突
+     */
+    private fun writeFileAtomic(path: String, content: String) {
+        val target = File(path)
+        target.parentFile?.mkdirs()
+        val tmp = File("${path}.tmp.${ProcessHandle.current().pid()}.${System.nanoTime()}")
+        try {
+            // 1. 写入临时文件 + fsync 确保落盘
+            FileOutputStream(tmp).use { fos ->
+                fos.write(content.toByteArray(Charsets.UTF_8))
+                fos.fd.sync()
+            }
+            // 2. 原子 rename
+            if (!tmp.renameTo(target)) {
+                // Windows fallback：先删除目标，再 rename
+                target.delete()
+                if (!tmp.renameTo(target)) {
+                    // 极端 fallback：copyTo + delete
+                    tmp.copyTo(target, overwrite = true)
+                    tmp.delete()
+                }
+            }
+        } catch (e: Exception) {
+            tmp.delete()
+            throw e
+        }
     }
 
     private fun readFile(path: String): String? {
-        val file = java.io.File(path)
+        val file = File(path)
         return if (file.exists()) file.readText(Charsets.UTF_8) else null
     }
 }

@@ -6,6 +6,7 @@ import com.ohv.shared.models.Creator
 import com.ohv.shared.platform.SecureStorage
 import io.ktor.client.*
 import io.ktor.client.call.*
+import io.ktor.client.plugins.*
 import io.ktor.client.plugins.contentnegotiation.*
 import io.ktor.client.request.*
 import io.ktor.serialization.kotlinx.json.*
@@ -16,12 +17,23 @@ import kotlinx.serialization.json.Json
  * 爱发电 API 服务层
  * 移植自 iOS AfdianAPIService.swift
  * URLSession → Ktor，逻辑完全一致
+ *
+ * v1.6 改动：
+ * 1. 添加 HttpTimeout（请求/连接/Socket 各 15s），对齐 iOS URLSession 配置
+ * 2. 提供 close() 方法供调用方在退出时关闭引擎，释放底层连接池
  */
 class AfdianApiService(private val secureStorage: SecureStorage) {
 
     companion object {
         const val AUTH_TOKEN_KEY = "afdian_auth_token"
         private const val BASE_URL = "https://afdian.com"
+
+        /** HTTP 请求总超时（毫秒），对齐 iOS URLSession.timeoutIntervalForRequest = 15s */
+        const val REQUEST_TIMEOUT_MS = 15_000L
+        /** TCP 连接超时（毫秒） */
+        const val CONNECT_TIMEOUT_MS = 15_000L
+        /** Socket 读写超时（毫秒） */
+        const val SOCKET_TIMEOUT_MS = 30_000L
     }
 
     private val client = HttpClient {
@@ -31,6 +43,11 @@ class AfdianApiService(private val secureStorage: SecureStorage) {
                 isLenient = true
             })
         }
+        install(HttpTimeout) {
+            requestTimeoutMillis = REQUEST_TIMEOUT_MS
+            connectTimeoutMillis = CONNECT_TIMEOUT_MS
+            socketTimeoutMillis = SOCKET_TIMEOUT_MS
+        }
     }
 
     val isLoggedIn: Boolean
@@ -38,6 +55,16 @@ class AfdianApiService(private val secureStorage: SecureStorage) {
 
     fun logout() {
         secureStorage.delete(AUTH_TOKEN_KEY)
+    }
+
+    /**
+     * 关闭底层 Ktor 引擎，释放 OkHttp / URLSession 连接池。
+     *
+     * 调用方应在应用退出前调用，避免引擎泄漏。
+     * 关闭后再次调用任何 API 方法会抛 IllegalStateException。
+     */
+    fun close() {
+        client.close()
     }
 
     // ─── 私有请求方法 ──────────────────────────────────────────────────────────
