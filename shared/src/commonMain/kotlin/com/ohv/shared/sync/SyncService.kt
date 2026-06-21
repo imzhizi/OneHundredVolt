@@ -3,6 +3,7 @@ package com.ohv.shared.sync
 import com.ohv.shared.api.AfdianApiService
 import com.ohv.shared.db.DatabaseService
 import com.ohv.shared.platform.KeyValueStore
+import com.ohv.shared.util.currentTimeMillis
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -116,15 +117,15 @@ class SyncService(
                         album.copy(
                             audioCount = items.size,
                             totalDuration = items.sumOf { it.duration },
-                            lastSyncedAt = System.currentTimeMillis()
+                            lastSyncedAt = currentTimeMillis()
                         )
                     )
                 }
 
-                db.upsertCreator(creator.copy(lastSyncedAt = System.currentTimeMillis()))
+                db.upsertCreator(creator.copy(lastSyncedAt = currentTimeMillis()))
             }
 
-            kvStore.putLong(LAST_SYNC_DATE_KEY, System.currentTimeMillis())
+            kvStore.putLong(LAST_SYNC_DATE_KEY, currentTimeMillis())
             kvStore.remove(SYNC_IN_PROGRESS_KEY)
 
             setProgress("同步完成", 1.0)

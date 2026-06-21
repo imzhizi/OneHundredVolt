@@ -12,9 +12,8 @@ import kotlinx.coroutines.flow.update
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
-import java.io.File
-import java.io.FileOutputStream
-import java.util.concurrent.atomic.AtomicBoolean
+import kotlin.concurrent.atomics.AtomicBoolean
+import kotlin.concurrent.atomics.ExperimentalAtomicApi
 
 /**
  * 本地数据库服务（JSON 文件 + 内存缓存）
@@ -27,8 +26,14 @@ import java.util.concurrent.atomic.AtomicBoolean
  * 4. 加载失败时把损坏文件改名为 .corrupt.<ts> 保留
  * 5. 启动时清理上次崩溃遗留的 .tmp 文件
  * 6. 构造函数接受 documentsDir 参数以便单元测试使用临时目录
+ *
+ * v1.6.5 改动（iOS KMP 兼容）：
+ * - 文件 IO 拆分为 DatabaseFileAccess expect/actual（绕过 java.io.File 在 iOS 不可用）
  */
+@OptIn(ExperimentalAtomicApi::class)
 class DatabaseService(documentsDir: String = getDocumentsDir()) {
+
+    constructor() : this(getDocumentsDir())
 
     companion object {
         // 延迟初始化：避免单元测试加载类时触发 getDocumentsDir() 调用
@@ -49,6 +54,8 @@ class DatabaseService(documentsDir: String = getDocumentsDir()) {
     private val dbFilePath: String by lazy {
         "$documentsDir/ohv_db.json"
     }
+
+    private val fileAccess: DatabaseFileAccess = DatabaseFileAccess(dbFilePath)
 
     private val ioScope = CoroutineScope(Dispatchers.Default + SupervisorJob())
 
@@ -171,10 +178,10 @@ class DatabaseService(documentsDir: String = getDocumentsDir()) {
         _creators.value = emptyList()
         _albums.value = emptyList()
         _audioItems.value = emptyList()
-        pendingSave.set(false)
+        pendingSave.store(false)
         ioScope.launch {
             try {
-                File(dbFilePath).delete()
+                fileAccess.deleteFile(dbFilePath)
             } catch (_: Exception) {
             }
         }
@@ -193,17 +200,17 @@ class DatabaseService(documentsDir: String = getDocumentsDir()) {
      * 调度一次磁盘写入。100ms 防抖窗口内多次调用只触发一次。
      *
      * 线程安全：使用 AtomicBoolean.compareAndSet 确保并发场景下
-     * 只有一个协程能成功进入调度逻辑，避免双重写入。
+     * 唯一一个协程能成功进入调度逻辑，避免双重写入。
      */
     private fun scheduleSave() {
-        if (!pendingSave.compareAndSet(false, true)) return
+        if (!pendingSave.compareAndSet(expectedValue = false, newValue = true)) return
         ioScope.launch {
             delay(100)
             try {
                 flushToDisk()
             } finally {
                 // 写完后再清 pending，允许后续 mutation 重新调度
-                pendingSave.set(false)
+                pendingSave.store(false)
             }
         }
     }
@@ -222,7 +229,7 @@ class DatabaseService(documentsDir: String = getDocumentsDir()) {
         )
         try {
             val data = json.encodeToString(snapshot)
-            writeFileAtomic(dbFilePath, data)
+            fileAccess.writeAtomic(dbFilePath, data)
         } catch (e: Exception) {
             // 写入失败不抛异常（用户无感），下次 scheduleSave 会重试
             println("DatabaseService.flushToDisk failed: $e")
@@ -239,7 +246,7 @@ class DatabaseService(documentsDir: String = getDocumentsDir()) {
      */
     private fun load() {
         try {
-            val data = readFile(dbFilePath)
+            val data = fileAccess.readFile(dbFilePath)
             if (data != null) {
                 val snapshot = json.decodeFromString<DbSnapshot>(data)
                 _creators.value = snapshot.creators
@@ -249,63 +256,14 @@ class DatabaseService(documentsDir: String = getDocumentsDir()) {
         } catch (e: Exception) {
             // JSON 损坏：保留原文件供用户手动恢复
             try {
-                val corrupt = File("${dbFilePath}.corrupt.${System.currentTimeMillis()}")
-                File(dbFilePath).renameTo(corrupt)
+                fileAccess.renameAsCorrupt(dbFilePath)
             } catch (_: Exception) {
             }
         }
-        // 无论加载成功与否，都清理遗留 .tmp（必须在 try/catch 外面，否则 db 文件不存在时不会执行）
-        cleanupTempFiles()
-    }
-
-    /**
-     * 清理上次崩溃遗留的 .tmp 文件。
-     * 通常发生在 SIGKILL 或断电场景。
-     */
-    private fun cleanupTempFiles() {
-        val target = File(dbFilePath)
-        val dir = target.parentFile ?: return
-        val prefix = "${target.name}.tmp."
-        dir.listFiles { f -> f.name.startsWith(prefix) }?.forEach { it.delete() }
-    }
-
-    // ─── 文件 IO（原子写入）─────────────────────────────────────────────────
-
-    /**
-     * 原子写入文件：先写到临时文件，再 rename 到目标路径。
-     *
-     * - POSIX 系统（Linux / macOS / iOS / Android）：rename 原子，旧文件保持完整
-     * - Windows：renameTo 失败时 fallback 到 copyTo + delete
-     * - 临时文件名带 PID + nanoTime，避免并发写入冲突
-     */
-    private fun writeFileAtomic(path: String, content: String) {
-        val target = File(path)
-        target.parentFile?.mkdirs()
-        val tmp = File("${path}.tmp.${ProcessHandle.current().pid()}.${System.nanoTime()}")
+        // 无论加载成功与否，都清理遗留 .tmp
         try {
-            // 1. 写入临时文件 + fsync 确保落盘
-            FileOutputStream(tmp).use { fos ->
-                fos.write(content.toByteArray(Charsets.UTF_8))
-                fos.fd.sync()
-            }
-            // 2. 原子 rename
-            if (!tmp.renameTo(target)) {
-                // Windows fallback：先删除目标，再 rename
-                target.delete()
-                if (!tmp.renameTo(target)) {
-                    // 极端 fallback：copyTo + delete
-                    tmp.copyTo(target, overwrite = true)
-                    tmp.delete()
-                }
-            }
-        } catch (e: Exception) {
-            tmp.delete()
-            throw e
+            fileAccess.cleanupTempFiles(dbFilePath)
+        } catch (_: Exception) {
         }
-    }
-
-    private fun readFile(path: String): String? {
-        val file = File(path)
-        return if (file.exists()) file.readText(Charsets.UTF_8) else null
     }
 }

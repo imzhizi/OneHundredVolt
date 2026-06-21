@@ -1,6 +1,7 @@
 package com.ohv.shared.progress
 
 import com.ohv.shared.platform.KeyValueStore
+import com.ohv.shared.util.currentTimeMillis
 import kotlinx.coroutines.*
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
@@ -67,7 +68,7 @@ class PlaybackProgressStore(private val kvStore: KeyValueStore) {
             val dict = try {
                 raw?.let { json.decodeFromString<Map<String, Long>>(it) }?.toMutableMap() ?: mutableMapOf()
             } catch (_: Exception) { mutableMapOf() }
-            dict[creatorId] = System.currentTimeMillis()
+            dict[creatorId] = currentTimeMillis()
             kvStore.putString(CREATOR_LAST_PLAYED_KEY, json.encodeToString(dict))
         }
     }
