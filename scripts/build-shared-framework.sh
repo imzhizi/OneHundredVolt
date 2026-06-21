@@ -1,38 +1,73 @@
 #!/bin/bash
-# Xcode Build Phase 脚本：将 KMP shared 模块编译为 Framework 并嵌入 iOS 项目
-# 在 Xcode → Build Phases → Run Script 中添加此脚本
+# 构建 KMP shared 模块为 xcframework
 #
-# 使用方法：
-# 1. 在 Xcode 项目中添加 Run Script Build Phase（放在 Compile Sources 之前）
-# 2. 脚本内容：bash "$SRCROOT/../scripts/build-shared-framework.sh"
-# 3. 取消勾选 "Based on dependency analysis"（每次都运行）
+# 用法：
+#   ./scripts/build-shared-framework.sh           # 默认 Release 配置
+#   ./scripts/build-shared-framework.sh Debug     # Debug 配置
 #
-# v1.6 起该脚本将替换为 SPM binaryTarget 引用 Shared.xcframework（见 plans/v1.6）
-# 本脚本作为过渡期使用。
+# 产物：
+#   shared/build/Shared.xcframework
+#
+# 集成方式（手动一次）：
+#   1. Xcode → File → Add Files... → 选择 shared/build/Shared.xcframework
+#   2. Target → Frameworks, Libraries, and Embedded Content → Embed & Sign
+#   3. 或用 SPM binaryTarget：参考 iosApp/Package.swift
+#
+# v1.6 改动：从单一架构 framework 升级为 xcframework（iOS ARM64 设备 +
+#            fat simulator 包含 x86_64 + arm64）。
 
 set -e
 
+CONFIG="${1:-Release}"
+
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 SHARED_MODULE="$REPO_ROOT/shared"
+OUTPUT_DIR="$SHARED_MODULE/build/Shared.xcframework"
+WORK_DIR="$SHARED_MODULE/build/xcframework-work"
 
-# 根据 Xcode 构建目标选择编译架构
-if [ "$PLATFORM_NAME" = "iphonesimulator" ]; then
-    KOTLIN_TARGET="iosSimulatorArm64"
-elif [ "$PLATFORM_NAME" = "iphoneos" ]; then
-    KOTLIN_TARGET="iosArm64"
-else
-    KOTLIN_TARGET="iosSimulatorArm64"
-fi
+# 清理旧产物
+rm -rf "$OUTPUT_DIR"
+rm -rf "$WORK_DIR"
+mkdir -p "$WORK_DIR"
 
-echo "▶ 编译 KMP shared 模块（目标：$KOTLIN_TARGET）..."
+echo "▶ 编译 KMP shared 模块（$CONFIG）..."
 cd "$REPO_ROOT"
-./gradlew ":shared:link${KOTLIN_TARGET^}FrameworkReleaseIos" --quiet
+./gradlew :shared:assemble"$CONFIG" --quiet
 
-FRAMEWORK_PATH="$SHARED_MODULE/build/bin/$KOTLIN_TARGET/releaseFramework/Shared.framework"
-DEST="$BUILT_PRODUCTS_DIR/$FRAMEWORKS_FOLDER_PATH/Shared.framework"
+# 拷贝 device + 两个 simulator framework
+DEVICE_FW="$WORK_DIR/device/Shared.framework"
+SIM_X64_FW="$WORK_DIR/simulator-x64/Shared.framework"
+SIM_ARM64_FW="$WORK_DIR/simulator-arm64/Shared.framework"
 
-echo "▶ 复制 Framework 到 $DEST"
-rm -rf "$DEST"
-cp -R "$FRAMEWORK_PATH" "$DEST"
+mkdir -p "$(dirname "$DEVICE_FW")" "$(dirname "$SIM_X64_FW")" "$(dirname "$SIM_ARM64_FW")"
 
-echo "✓ shared 模块嵌入完成"
+cp -R "$SHARED_MODULE/build/bin/iosArm64/releaseFramework/Shared.framework" "$DEVICE_FW"
+cp -R "$SHARED_MODULE/build/bin/iosX64/releaseFramework/Shared.framework" "$SIM_X64_FW"
+cp -R "$SHARED_MODULE/build/bin/iosSimulatorArm64/releaseFramework/Shared.framework" "$SIM_ARM64_FW"
+
+# 合并两个 simulator slices 为 fat framework
+FAT_SIM_FW="$WORK_DIR/simulator-fat/Shared.framework"
+mkdir -p "$FAT_SIM_FW"
+cp -R "$SIM_ARM64_FW/." "$FAT_SIM_FW/"
+SIM_FAT_BIN="$WORK_DIR/simulator-fat/shared-tmp"
+mkdir -p "$SIM_FAT_BIN"
+lipo -create \
+    "$SIM_X64_FW/Shared" \
+    "$SIM_ARM64_FW/Shared" \
+    -output "$SIM_FAT_BIN/Shared"
+cp "$SIM_FAT_BIN/Shared" "$FAT_SIM_FW/Shared"
+
+# 修正 simulator fat framework 的 MinimumOSVersion 取最大值
+plutil -replace MinimumOSVersion -string "14.0" "$FAT_SIM_FW/Info.plist"
+
+echo "▶ 生成 xcframework..."
+xcodebuild -create-xcframework \
+    -framework "$DEVICE_FW" \
+    -framework "$FAT_SIM_FW" \
+    -output "$OUTPUT_DIR"
+
+# 清理中间产物
+rm -rf "$WORK_DIR"
+
+echo "✓ xcframework 已生成: $OUTPUT_DIR"
+ls -la "$OUTPUT_DIR"

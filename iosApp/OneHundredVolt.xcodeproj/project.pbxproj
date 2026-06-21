@@ -16,12 +16,32 @@
 		};
 /* End PBXContainerItemProxy section */
 
+/* Begin PBXCopyFilesBuildPhase section */
+		BB0000010000000000000004 /* Embed Frameworks */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 10;
+			files = (
+				BB0000010000000000000003 /* Shared.xcframework in Embed Frameworks */,
+			);
+			name = "Embed Frameworks";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
+
 /* Begin PBXFileReference section */
 		537297F02F9F3E6600614B88 /* OneHundredVolt.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = OneHundredVolt.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		AA000001000000000000001B /* OneHundredVoltTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = OneHundredVoltTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		BB0000010000000000000001 /* Shared.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; name = Shared.xcframework; path = ../shared/build/Shared.xcframework; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
-/* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
+/* Begin PBXBuildFile section */
+		BB0000010000000000000002 /* Shared.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = BB0000010000000000000001 /* Shared.xcframework */; };
+		BB0000010000000000000003 /* Shared.xcframework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = BB0000010000000000000001 /* Shared.xcframework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
 		537298842F9F49A300614B88 /* Exceptions for "OneHundredVolt" folder in "OneHundredVolt" target */ = {
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
 			membershipExceptions = (
@@ -52,6 +72,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				BB0000010000000000000002 /* Shared.xcframework in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -70,6 +91,7 @@
 			children = (
 				537297F22F9F3E6600614B88 /* OneHundredVolt */,
 				AA000001000000000000002E /* OneHundredVoltTests */,
+				BB0000010000000000000001 /* Shared.xcframework */,
 				537297F12F9F3E6600614B88 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -90,8 +112,10 @@
 			isa = PBXNativeTarget;
 			buildConfigurationList = 537297FB2F9F3E6800614B88 /* Build configuration list for PBXNativeTarget "OneHundredVolt" */;
 			buildPhases = (
+				BB0000010000000000000005 /* Build Shared.xcframework */,
 				537297EC2F9F3E6600614B88 /* Sources */,
 				537297ED2F9F3E6600614B88 /* Frameworks */,
+				BB0000010000000000000004 /* Embed Frameworks */,
 				537297EE2F9F3E6600614B88 /* Resources */,
 			);
 			buildRules = (
@@ -166,6 +190,27 @@
 			);
 		};
 /* End PBXProject section */
+
+/* Begin PBXShellScriptBuildPhase section */
+		BB0000010000000000000005 /* Build Shared.xcframework */ = {
+			isa = PBXShellScriptBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Build Shared.xcframework";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/bash;
+			shellScript = "set -e\n\"$SRCROOT/../scripts/build-shared-framework.sh\" \"$(CONFIGURATION)\"\n";
+		};
+/* End PBXShellScriptBuildPhase section */
 
 /* Begin PBXResourcesBuildPhase section */
 		537297EE2F9F3E6600614B88 /* Resources */ = {
