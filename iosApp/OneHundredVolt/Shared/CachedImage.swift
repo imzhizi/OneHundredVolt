@@ -62,6 +62,21 @@ final class ImageCache {
             .map { String(format: "%02x", $0) }.joined()
         return diskCacheURL.appendingPathComponent(hash + ".jpg")
     }
+
+    // MARK: - 预生成（prefetch）
+
+    /// 预加载 URL 列表到内存缓存（不阻塞主线程，不阻塞当前渲染）
+    /// 用途：列表滚动时提前预热前几张/后几张的封面，提升滚动体验
+    func prefetch(_ urlStrings: [String?]) {
+        for urlString in urlStrings {
+            guard let urlString, !urlString.isEmpty else { continue }
+            // 已在内存则跳过
+            if memory.object(forKey: urlString as NSString) != nil { continue }
+            Task.detached(priority: .utility) {
+                _ = self.get(urlString)
+            }
+        }
+    }
 }
 
 // MARK: - 异步加载 + 双层缓存的图片视图

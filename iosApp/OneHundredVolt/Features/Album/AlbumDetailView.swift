@@ -35,6 +35,11 @@ struct AlbumDetailView: View {
                                         .onTapGesture {
                                             postDetailURL = URL(string: "https://afdian.com/p/\(item.id)")
                                         }
+                                        .onAppear {
+                                            // 预热：当前 row 出现时，加载后续 3 张封面
+                                            let next3 = viewModel.displayItems.dropFirst(index + 1).prefix(3).map { $0.coverUrl }
+                                            ImageCache.shared.prefetch(Array(next3))
+                                        }
 
                                     if index < viewModel.displayItems.count - 1 {
                                         Divider()
