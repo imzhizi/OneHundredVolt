@@ -18,7 +18,7 @@ import com.ohv.shared.db.DatabaseService
 import com.ohv.shared.platform.KeyValueStore
 import com.ohv.shared.platform.SecureStorage
 import com.ohv.shared.sync.SyncService
-import com.ohv.shared.sync.SyncService.SyncState
+import com.ohv.shared.sync.SyncState
 import kotlinx.coroutines.launch
 
 /**

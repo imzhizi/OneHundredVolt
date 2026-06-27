@@ -26,14 +26,7 @@ class SyncService(
         private const val LAST_SYNC_DATE_KEY = "last_sync_date"
     }
 
-    // ─── 同步状态 ─────────────────────────────────────────────────────────────
-
-    sealed class SyncState {
-        object Idle : SyncState()
-        data class Syncing(val message: String, val progress: Double) : SyncState()
-        object Success : SyncState()
-        data class Failed(val error: Exception) : SyncState()
-    }
+    // ─── 同步状态（详见 SyncState.kt，顶层 sealed class）────────────────────
 
     private val _state = MutableStateFlow<SyncState>(SyncState.Idle)
     val state: StateFlow<SyncState> = _state.asStateFlow()
@@ -42,6 +35,21 @@ class SyncService(
 
     val lastSyncDate: Long?
         get() = kvStore.getLong(LAST_SYNC_DATE_KEY, 0L).takeIf { it > 0L }
+
+    // ─── Callback API（v1.7 Phase C.3）──────────────────────────────────────
+
+    // 同 DatabaseService 设计：closure 替代 listener interface
+    var stateCallback: ((SyncState) -> Unit)? = null
+        private set
+
+    fun setOnStateChangedCallback(callback: ((SyncState) -> Unit)?) {
+        stateCallback = callback
+        callback?.invoke(_state.value)
+    }
+
+    private fun notifyStateChanged(state: SyncState) {
+        stateCallback?.invoke(state)
+    }
 
     // ─── 启动时检测中断 ───────────────────────────────────────────────────────
 
@@ -62,6 +70,7 @@ class SyncService(
     private suspend fun sync(creatorIds: List<String>) {
         if (creatorIds.isEmpty()) {
             _state.value = SyncState.Success
+            notifyStateChanged(_state.value)
             return
         }
 
@@ -130,14 +139,17 @@ class SyncService(
 
             setProgress("同步完成", 1.0)
             _state.value = SyncState.Success
+            notifyStateChanged(_state.value)
 
         } catch (e: Exception) {
             kvStore.remove(SYNC_IN_PROGRESS_KEY)
             _state.value = SyncState.Failed(e)
+            notifyStateChanged(_state.value)
         }
     }
 
     private fun setProgress(message: String, progress: Double) {
         _state.value = SyncState.Syncing(message, progress)
+        notifyStateChanged(_state.value)
     }
 }

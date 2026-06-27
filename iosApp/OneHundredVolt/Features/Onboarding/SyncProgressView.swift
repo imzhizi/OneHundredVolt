@@ -47,11 +47,11 @@ struct SyncProgressView: View {
                             .font(Theme.Typography.title)
                             .foregroundColor(Theme.Colors.success)
 
-                    case .failed(let err):
+                    case .failed:
                         Text("同步失败")
                             .font(Theme.Typography.title)
                             .foregroundColor(Theme.Colors.warning)
-                        Text(err.localizedDescription)
+                        Text("请重试或检查网络")
                             .font(Theme.Typography.caption)
                             .foregroundColor(Theme.Colors.textSecondary)
                             .multilineTextAlignment(.center)
