@@ -17,18 +17,12 @@ import kotlin.concurrent.atomics.ExperimentalAtomicApi
 
 /**
  * 本地数据库服务（JSON 文件 + 内存缓存）
- * 移植自 iOS DatabaseService.swift
  *
- * v1.6 改动：
- * 1. upsert/delete 改用 StateFlow.update {} 保证 read-modify-write 原子性
- * 2. 防抖改用 AtomicBoolean.compareAndSet 保证线程安全
- * 3. 文件写入改 temp + rename 原子写入（POSIX rename 原子，Windows fallback）
- * 4. 加载失败时把损坏文件改名为 .corrupt.<ts> 保留
- * 5. 启动时清理上次崩溃遗留的 .tmp 文件
- * 6. 构造函数接受 documentsDir 参数以便单元测试使用临时目录
- *
- * v1.6.5 改动（iOS KMP 兼容）：
- * - 文件 IO 拆分为 DatabaseFileAccess expect/actual（绕过 java.io.File 在 iOS 不可用）
+ * v1.7 改动：增加 callback API（Listener 接口）
+ *  - 替代直接暴露 StateFlow 给 Swift（cinterop 难消费）
+ *  - iOS 通过 addListener + @Observable 镜像属性变化，无轮询
+ *  - Android 仍可使用 internal StateFlow 直接读取
+ *  - 内部仍用 StateFlow.update {} 原子 RMW
  */
 @OptIn(ExperimentalAtomicApi::class)
 class DatabaseService(documentsDir: String = getDocumentsDir()) {
@@ -40,16 +34,70 @@ class DatabaseService(documentsDir: String = getDocumentsDir()) {
         val shared: DatabaseService by lazy { DatabaseService() }
     }
 
-    // ─── 内存存储（StateFlow 供 UI 观察）────────────────────────────────────
+    // ─── 内部 StateFlow（仅 commonMain 内部 / Android 使用）────────────────
 
-    private val _creators = MutableStateFlow<List<Creator>>(emptyList())
+    internal val _creators = MutableStateFlow<List<Creator>>(emptyList())
     val creators: StateFlow<List<Creator>> = _creators.asStateFlow()
 
-    private val _albums = MutableStateFlow<List<Album>>(emptyList())
+    internal val _albums = MutableStateFlow<List<Album>>(emptyList())
     val albums: StateFlow<List<Album>> = _albums.asStateFlow()
 
-    private val _audioItems = MutableStateFlow<List<AudioItem>>(emptyList())
+    internal val _audioItems = MutableStateFlow<List<AudioItem>>(emptyList())
     val audioItems: StateFlow<List<AudioItem>> = _audioItems.asStateFlow()
+
+    // ─── Listener 管理 ──────────────────────────────────────────────────────
+
+    /**
+     * 变更通知监听器
+     *
+     * 三种数据各自独立通知，便于监听方只关心自己需要的数据。
+     * 回调在 Shared 内部线程触发，调用方需自行切到主线程（@MainActor / Dispatchers.Main）。
+     */
+    interface Listener {
+        fun onCreatorsChanged(creators: List<Creator>)
+        fun onAlbumsChanged(albums: List<Album>)
+        fun onAudioItemsChanged(items: List<AudioItem>)
+    }
+
+    // 用 AtomicReference 持有不可变快照，实现 lock-free 的并发安全
+    private val listenersRef = kotlin.concurrent.atomics.AtomicReference<List<Listener>>(emptyList())
+
+    fun addListener(listener: Listener) {
+        while (true) {
+            val current = listenersRef.load()
+            val updated = current + listener
+            if (listenersRef.compareAndSet(expectedValue = current, newValue = updated)) {
+                // 注册时立即推送当前状态（避免遗漏初始值）
+                listener.onCreatorsChanged(_creators.value)
+                listener.onAlbumsChanged(_albums.value)
+                listener.onAudioItemsChanged(_audioItems.value)
+                return
+            }
+        }
+    }
+
+    fun removeListener(listener: Listener) {
+        while (true) {
+            val current = listenersRef.load()
+            val updated = current.filter { it !== listener }
+            if (listenersRef.compareAndSet(expectedValue = current, newValue = updated)) return
+            if (updated.size == current.size) return  // 没找到，提前返回
+        }
+    }
+
+    private fun notifyCreatorsChanged(list: List<Creator>) {
+        listenersRef.load().forEach { it.onCreatorsChanged(list) }
+    }
+
+    private fun notifyAlbumsChanged(list: List<Album>) {
+        listenersRef.load().forEach { it.onAlbumsChanged(list) }
+    }
+
+    private fun notifyAudioItemsChanged(list: List<AudioItem>) {
+        listenersRef.load().forEach { it.onAudioItemsChanged(list) }
+    }
+
+    // ─── 文件 IO 与持久化 ─────────────────────────────────────────────────
 
     private val dbFilePath: String by lazy {
         "$documentsDir/ohv_db.json"
@@ -59,7 +107,6 @@ class DatabaseService(documentsDir: String = getDocumentsDir()) {
 
     private val ioScope = CoroutineScope(Dispatchers.Default + SupervisorJob())
 
-    // 防抖：compareAndSet 保证并发场景下只有一个协程进入
     private val pendingSave = AtomicBoolean(false)
 
     private val json = Json {
@@ -71,7 +118,7 @@ class DatabaseService(documentsDir: String = getDocumentsDir()) {
         load()
     }
 
-    // ─── Creator CRUD ─────────────────────────────────────────────────────────
+    // ─── Creator CRUD ────────────────────────────────────────────────────────
 
     fun upsertCreator(creator: Creator) {
         _creators.update { current ->
@@ -80,6 +127,7 @@ class DatabaseService(documentsDir: String = getDocumentsDir()) {
             if (idx >= 0) list[idx] = creator else list.add(creator)
             list
         }
+        notifyCreatorsChanged(_creators.value)
         scheduleSave()
     }
 
@@ -92,6 +140,7 @@ class DatabaseService(documentsDir: String = getDocumentsDir()) {
             }
             mutable
         }
+        notifyCreatorsChanged(_creators.value)
         scheduleSave()
     }
 
@@ -99,6 +148,9 @@ class DatabaseService(documentsDir: String = getDocumentsDir()) {
         _creators.update { it.filter { c -> c.id != id } }
         _albums.update { it.filter { a -> a.creatorId != id } }
         _audioItems.update { it.filter { i -> i.creatorId != id } }
+        notifyCreatorsChanged(_creators.value)
+        notifyAlbumsChanged(_albums.value)
+        notifyAudioItemsChanged(_audioItems.value)
         scheduleSave()
     }
 
@@ -113,6 +165,7 @@ class DatabaseService(documentsDir: String = getDocumentsDir()) {
             if (idx >= 0) list[idx] = album else list.add(album)
             list
         }
+        notifyAlbumsChanged(_albums.value)
         scheduleSave()
     }
 
@@ -125,6 +178,7 @@ class DatabaseService(documentsDir: String = getDocumentsDir()) {
             }
             mutable
         }
+        notifyAlbumsChanged(_albums.value)
         scheduleSave()
     }
 
@@ -146,6 +200,7 @@ class DatabaseService(documentsDir: String = getDocumentsDir()) {
             }
             list
         }
+        notifyAudioItemsChanged(_audioItems.value)
         scheduleSave()
     }
 
@@ -163,6 +218,7 @@ class DatabaseService(documentsDir: String = getDocumentsDir()) {
             }
             mutable
         }
+        notifyAudioItemsChanged(_audioItems.value)
         scheduleSave()
     }
 
@@ -179,6 +235,9 @@ class DatabaseService(documentsDir: String = getDocumentsDir()) {
         _albums.value = emptyList()
         _audioItems.value = emptyList()
         pendingSave.store(false)
+        notifyCreatorsChanged(emptyList())
+        notifyAlbumsChanged(emptyList())
+        notifyAudioItemsChanged(emptyList())
         ioScope.launch {
             try {
                 fileAccess.deleteFile(dbFilePath)
@@ -196,12 +255,6 @@ class DatabaseService(documentsDir: String = getDocumentsDir()) {
         val audioItems: List<AudioItem>
     )
 
-    /**
-     * 调度一次磁盘写入。100ms 防抖窗口内多次调用只触发一次。
-     *
-     * 线程安全：使用 AtomicBoolean.compareAndSet 确保并发场景下
-     * 唯一一个协程能成功进入调度逻辑，避免双重写入。
-     */
     private fun scheduleSave() {
         if (!pendingSave.compareAndSet(expectedValue = false, newValue = true)) return
         ioScope.launch {
@@ -209,19 +262,12 @@ class DatabaseService(documentsDir: String = getDocumentsDir()) {
             try {
                 flushToDisk()
             } finally {
-                // 写完后再清 pending，允许后续 mutation 重新调度
                 pendingSave.store(false)
             }
         }
     }
 
-    /**
-     * 立即将内存状态写入磁盘（原子写入）。
-     *
-     * 调用方负责线程切换（应在 IO 调度器上调用）。
-     */
     internal fun flushToDisk() {
-        // 在拿锁之外先读 StateFlow 值，避免持锁期间长时间阻塞其他 reader
         val snapshot = DbSnapshot(
             creators = _creators.value,
             albums = _albums.value,
@@ -231,19 +277,10 @@ class DatabaseService(documentsDir: String = getDocumentsDir()) {
             val data = json.encodeToString(snapshot)
             fileAccess.writeAtomic(dbFilePath, data)
         } catch (e: Exception) {
-            // 写入失败不抛异常（用户无感），下次 scheduleSave 会重试
             println("DatabaseService.flushToDisk failed: $e")
         }
     }
 
-    /**
-     * 启动时加载磁盘数据。
-     *
-     * 若文件损坏（JSON 解析失败），把原文件改名为 .corrupt.<ts> 保留，
-     * 用户后续可手动恢复。损坏文件不删除，避免数据彻底丢失。
-     *
-     * 不论加载成功与否，都会清理遗留的 .tmp 文件。
-     */
     private fun load() {
         try {
             val data = fileAccess.readFile(dbFilePath)
@@ -254,13 +291,11 @@ class DatabaseService(documentsDir: String = getDocumentsDir()) {
                 _audioItems.value = snapshot.audioItems
             }
         } catch (e: Exception) {
-            // JSON 损坏：保留原文件供用户手动恢复
             try {
                 fileAccess.renameAsCorrupt(dbFilePath)
             } catch (_: Exception) {
             }
         }
-        // 无论加载成功与否，都清理遗留 .tmp
         try {
             fileAccess.cleanupTempFiles(dbFilePath)
         } catch (_: Exception) {
