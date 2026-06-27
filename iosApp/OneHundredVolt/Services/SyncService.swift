@@ -80,8 +80,13 @@ final class SyncService {
                 for (j, album) in unknownAlbums.enumerated() {
                     let probeProgress = baseProgress + Double(j) / Double(max(unknownAlbums.count, 1)) * (0.85 / Double(total) * 0.3)
                     await setProgress("检测权限 \(creator.name) — \(album.title)...", probeProgress)
-                    try await Task.sleep(nanoseconds: 500_000_000)
+                    // v1.6 修复：sleep 移到 probe 之后
+                    //  原实现先 sleep 500ms 再 probe，第一次无意义等待
+                    //  改为：先 probe，结束后再 sleep 500ms（rate-limit QPS ≤ 2/s）
                     let accessible = await api.probeAlbumAccessibility(albumId: album.id)
+                    if j < unknownAlbums.count - 1 {
+                        try await Task.sleep(nanoseconds: 500_000_000)
+                    }
                     if accessible {
                         if let idx = albums.firstIndex(where: { $0.id == album.id }) {
                             albums[idx].isAccessible = true
