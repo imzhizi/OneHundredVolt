@@ -1,39 +1,49 @@
 import Foundation
+import Shared
 
-/// 本地播放进度存储（UserDefaults）
-/// 完全本地管理，不与爱发电服务端同步
+/// 本地播放进度存储（Shared.PlaybackProgressStore 的 iOS 适配层）
+///
+/// v1.6：基于 shared module 的 PlaybackProgressStore（KMP）作为后端
+///  - Shared 用 KeyValueStore 替代 UserDefaults（iOS 实际仍写 NSUserDefaults）
+///  - Shared 用 15s 定时落盘 + flushToDisk() 立即写（替代原 100ms 防抖）
+///
+/// @Observable 保留以维持 SwiftUI views 的观察语义（completedIds 需本地镜像）
 @Observable
 final class PlaybackProgressStore {
 
     static let shared = PlaybackProgressStore()
 
-    private let defaults = UserDefaults.standard
-    private let progressKey       = "playback_progress_v1"
-    private let lastPlayedKey     = "last_played_post_id"
-    private let completedKey      = "playback_completed_v1"
-    private let creatorLastPlayedKey = "creator_last_played_v1"
+    private let backend: Shared.PlaybackProgressStore = Shared.PlaybackProgressStore.companion.shared
 
-    /// 防抖写 UserDefaults（避免每次进度更新都同步写磁盘）
-    private var persistDebounceTask: DispatchWorkItem?
-
-    /// postId → 播放秒数
-    private var cache: [String: TimeInterval] = [:]
-    /// 已播完的单集 id 集合
+    /// 已播完的单集 id 集合（本地镜像，SwiftUI 直接访问以建立 @Observable 响应追踪）
     private(set) var completedIds: Set<String> = []
 
+    private var observerTask: Task<Void, Never>?
+
     private init() {
-        if let dict = defaults.dictionary(forKey: progressKey) as? [String: Double] {
-            cache = dict.mapValues { TimeInterval($0) }
+        completedIds = Set(backend.completedIds())
+
+        // 轮询同步 completedIds（Shared 后端无 AsyncSequence 暴露）
+        observerTask = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 500_000_000)
+                guard let self else { return }
+                let ids = Set(self.backend.completedIds())
+                await MainActor.run {
+                    if self.completedIds != ids { self.completedIds = ids }
+                }
+            }
         }
-        if let arr = defaults.array(forKey: completedKey) as? [String] {
-            completedIds = Set(arr)
-        }
+    }
+
+    deinit {
+        observerTask?.cancel()
     }
 
     // MARK: - 读取
 
     func progress(for postId: String) -> TimeInterval {
-        cache[postId] ?? 0
+        backend.progress(postId: postId)
     }
 
     func isCompleted(_ postId: String) -> Bool {
@@ -41,63 +51,42 @@ final class PlaybackProgressStore {
     }
 
     var lastPlayedPostId: String? {
-        defaults.string(forKey: lastPlayedKey)
+        backend.lastPlayedPostId
+    }
+
+    func lastPlayedDate(for creatorId: String) -> Date? {
+        backend.lastPlayedDate(creatorId: creatorId).map {
+            Date(timeIntervalSince1970: TimeInterval($0.int64Value) / 1000.0)
+        }
     }
 
     // MARK: - 写入
 
     func setProgress(_ seconds: TimeInterval, for postId: String) {
-        cache[postId] = max(0, seconds)
-        persist()
+        backend.setProgress(seconds: seconds, postId: postId)
     }
 
-    func setLastPlayed(postId: String, creatorId: String? = nil) {
-        defaults.set(postId, forKey: lastPlayedKey)
-        if let creatorId, !creatorId.isEmpty {
-            var dict = (defaults.dictionary(forKey: creatorLastPlayedKey) as? [String: Date]) ?? [:]
-            dict[creatorId] = Date()
-            defaults.set(dict, forKey: creatorLastPlayedKey)
-        }
+    /// 立即同步写磁盘（用于暂停、seek、杀进程等关键事件）
+    func flushToDisk() {
+        backend.flushToDisk()
     }
 
-    func lastPlayedDate(for creatorId: String) -> Date? {
-        (defaults.dictionary(forKey: creatorLastPlayedKey) as? [String: Date])?[creatorId]
+    func setLastPlayed(postId: String, creatorId: String?) {
+        backend.setLastPlayed(postId: postId, creatorId: creatorId)
     }
 
-    /// 播放完成时调用：清除进度并标记为已完成
     func markCompleted(for postId: String) {
-        cache.removeValue(forKey: postId)
+        backend.markCompleted(postId: postId)
         completedIds.insert(postId)
-        persist()
-        persistCompleted()
     }
 
     func clearProgress(for postId: String) {
-        cache.removeValue(forKey: postId)
-        persist()
+        backend.clearProgress(postId: postId)
+        completedIds.remove(postId)
     }
 
     func clearAll() {
-        cache.removeAll()
+        backend.clearAll()
         completedIds.removeAll()
-        defaults.removeObject(forKey: progressKey)
-        defaults.removeObject(forKey: lastPlayedKey)
-        defaults.removeObject(forKey: completedKey)
-    }
-
-    // MARK: - 持久化（防抖：100ms 内多次调用只写一次）
-
-    private func persist() {
-        persistDebounceTask?.cancel()
-        let task = DispatchWorkItem { [weak self] in
-            guard let self else { return }
-            self.defaults.set(self.cache.mapValues { Double($0) }, forKey: self.progressKey)
-        }
-        persistDebounceTask = task
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1, execute: task)
-    }
-
-    private func persistCompleted() {
-        defaults.set(Array(completedIds), forKey: completedKey)
     }
 }

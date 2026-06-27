@@ -40,6 +40,9 @@ class PlaybackProgressStore(private val kvStore: KeyValueStore) {
 
     fun isCompleted(postId: String): Boolean = completedIds.contains(postId)
 
+    /** 已播完的单集 id 列表（供 iOS SwiftUI @Observable 镜像） */
+    fun completedIds(): List<String> = completedIds.toList()
+
     val lastPlayedPostId: String?
         get() = kvStore.getString(LAST_PLAYED_KEY)
 
