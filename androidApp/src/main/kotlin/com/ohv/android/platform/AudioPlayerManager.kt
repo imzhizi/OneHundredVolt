@@ -236,15 +236,21 @@ class AudioPlayerManager private constructor(private val context: Context) {
     private fun startProgressPolling() {
         if (progressJob?.isActive == true) return
         progressJob = scope.launch {
+            // UI 更新频率：200ms（5Hz，保证进度条平滑）
+            // 磁盘持久化频率：1Hz（通过 lastPersistMs 跟踪，避免每次轮询都写）
+            var lastPersistMs = 0L
             while (isActive) {
                 val ctrl = controller ?: break
                 val position = ctrl.currentPosition.coerceAtLeast(0L)
                 val duration = ctrl.duration.takeIf { it > 0 } ?: _state.value.durationMs
                 _state.value = _state.value.copy(currentTimeMs = position, durationMs = duration)
 
+                // 磁盘写入：每秒最多一次（Shared.PlaybackProgressStore 内部还有 15s 防抖）
                 val item = _state.value.currentItem
-                if (item != null && position > 0) {
+                val now = System.currentTimeMillis()
+                if (item != null && position > 0 && now - lastPersistMs >= 1000) {
                     progressStore.setProgress(position / 1000.0, item.id)
+                    lastPersistMs = now
                 }
 
                 if (sleepEndMs > 0) {
