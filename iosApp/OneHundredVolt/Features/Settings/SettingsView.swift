@@ -223,6 +223,8 @@ struct SettingsView: View {
         player.clearAll()
         db.clearAll()
         progressStore.clearAll()
+        // v1.6 同步清空音频缓存（与 Android SettingsScreen clearCache 对齐）
+        AudioCacheService.shared.clearCache()
         NotificationCenter.default.post(name: .didClearData, object: nil)
     }
 
