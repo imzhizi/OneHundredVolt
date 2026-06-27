@@ -11,10 +11,16 @@ final class NowPlayingService {
     private let center = MPNowPlayingInfoCenter.default()
     private let commandCenter = MPRemoteCommandCenter.shared()
 
+    /// 当前正在显示的 item id（用于 race 检测）
+    /// 封面异步加载完成时，只有当 currentItemId 未变才应用 artwork
+    private var currentItemId: String?
+
+    /// 当前正在进行的封面加载任务（用于切换 track 时取消上一个）
+    private var artworkTask: Task<Void, Never>?
+
     // MARK: - Remote Commands
 
     private func setupRemoteCommands() {
-        // 播放 / 暂停
         commandCenter.playCommand.addTarget { [weak self] _ in
             self?.player.resume()
             return .success
@@ -27,7 +33,6 @@ final class NowPlayingService {
             self?.player.togglePlayPause()
             return .success
         }
-        // 下一首 / 上一首
         commandCenter.nextTrackCommand.addTarget { [weak self] _ in
             self?.player.playNext()
             return .success
@@ -36,13 +41,11 @@ final class NowPlayingService {
             self?.player.playPrevious()
             return .success
         }
-        // 进度拖动
         commandCenter.changePlaybackPositionCommand.addTarget { [weak self] event in
             guard let e = event as? MPChangePlaybackPositionCommandEvent else { return .commandFailed }
             self?.player.seek(to: e.positionTime)
             return .success
         }
-        // 快进 / 快退
         commandCenter.skipForwardCommand.preferredIntervals = [30]
         commandCenter.skipForwardCommand.addTarget { [weak self] _ in
             self?.player.skipForward()
@@ -59,8 +62,16 @@ final class NowPlayingService {
 
     func updateNowPlaying(item: AudioItem?) {
         guard let item else {
+            currentItemId = nil
+            artworkTask?.cancel()
             center.nowPlayingInfo = nil
             return
+        }
+
+        // 切换 track 时取消上一个未完成的封面加载
+        if currentItemId != item.id {
+            artworkTask?.cancel()
+            currentItemId = item.id
         }
 
         var info: [String: Any] = [
@@ -74,22 +85,26 @@ final class NowPlayingService {
             info[MPMediaItemPropertyPlaybackDuration] = item.duration
         }
 
-        // 异步加载封面图（用 URLSession 避免阻塞主线程）
+        // 先设置初始 info（无封面），让锁屏立刻有信息显示
+        center.nowPlayingInfo = info
+
+        // 异步加载封面：用 currentItemId race 检测，避免把旧 cover 应用到新 track
         if let coverUrl = item.coverUrl, let url = URL(string: coverUrl) {
-            Task {
-                if let (data, _) = try? await URLSession.shared.data(from: url),
-                   let uiImage = UIImage(data: data) {
-                    let artwork = MPMediaItemArtwork(boundsSize: uiImage.size) { _ in uiImage }
+            let targetId = item.id
+            artworkTask = Task { [weak self] in
+                guard let self else { return }
+                guard let (data, _) = try? await URLSession.shared.data(from: url),
+                      let uiImage = UIImage(data: data) else { return }
+                // race check：track 未切换才应用
+                guard self.currentItemId == targetId else { return }
+                let artwork = MPMediaItemArtwork(boundsSize: uiImage.size) { _ in uiImage }
+                await MainActor.run {
                     var updatedInfo = self.center.nowPlayingInfo ?? info
                     updatedInfo[MPMediaItemPropertyArtwork] = artwork
-                    await MainActor.run {
-                        self.center.nowPlayingInfo = updatedInfo
-                    }
+                    self.center.nowPlayingInfo = updatedInfo
                 }
             }
         }
-
-        center.nowPlayingInfo = info
     }
 
     func updateProgress(current: TimeInterval, duration: TimeInterval) {
