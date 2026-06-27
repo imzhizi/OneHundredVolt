@@ -1,55 +1,35 @@
 import Foundation
-import Security
+import Shared
 
-/// Keychain 封装 — 安全存储 auth_token
+/// SecureStorage 封装 — 安全存储 auth_token
+///
+/// v1.6：底层改为 Shared.SecureStorage（KMP 统一）
+///  - iOS: NSUserDefaults（待 v1.7 升级 Keychain）
+///  - Android: EncryptedSharedPreferences
+///
+/// 保留原 KeychainService API 形态以便最小化迁移，
+/// 后续可在 v1.7 删除本文件统一改用 Shared.SecureStorage。
 enum KeychainService {
 
-    private static let service = "com.onehundredvolt.afdian"
+    private static let secureStorage = Shared.SecureStorage()
 
     /// 保存或更新
     @discardableResult
     static func save(_ value: String, forKey key: String) -> Bool {
-        guard let data = value.data(using: .utf8) else { return false }
-
-        // 先删除旧值
-        delete(forKey: key)
-
-        let query: [CFString: Any] = [
-            kSecClass:       kSecClassGenericPassword,
-            kSecAttrService: service,
-            kSecAttrAccount: key,
-            kSecValueData:   data
-        ]
-        return SecItemAdd(query as CFDictionary, nil) == errSecSuccess
+        secureStorage.save(key: key, value: value)
+        return true
     }
 
     /// 读取
     static func load(forKey key: String) -> String? {
-        let query: [CFString: Any] = [
-            kSecClass:            kSecClassGenericPassword,
-            kSecAttrService:      service,
-            kSecAttrAccount:      key,
-            kSecReturnData:       true,
-            kSecMatchLimit:       kSecMatchLimitOne
-        ]
-        var result: AnyObject?
-        let status = SecItemCopyMatching(query as CFDictionary, &result)
-        guard status == errSecSuccess,
-              let data = result as? Data,
-              let str = String(data: data, encoding: .utf8)
-        else { return nil }
-        return str
+        secureStorage.get(key: key)
     }
 
     /// 删除
     @discardableResult
     static func delete(forKey key: String) -> Bool {
-        let query: [CFString: Any] = [
-            kSecClass:       kSecClassGenericPassword,
-            kSecAttrService: service,
-            kSecAttrAccount: key
-        ]
-        return SecItemDelete(query as CFDictionary) == errSecSuccess
+        secureStorage.delete(key: key)
+        return true
     }
 
     // MARK: - 便捷常量
