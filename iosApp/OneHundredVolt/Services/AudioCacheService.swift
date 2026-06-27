@@ -24,6 +24,11 @@ final class AudioCacheService {
     /// 串行化所有文件系统操作（cachedURL / cacheAudio / removeCache / clearCache 等）
     private let cacheLock = NSLock()
 
+    /// 跟踪正在进行的 cacheAudio 任务（postId -> Task）
+    /// 用于 clearCache 时取消未完成的下载
+    private var activeDownloads: [String: Task<Void, Never>] = [:]
+    private let downloadsLock = NSLock()
+
     // MARK: - Public API
 
     func cachedURL(for postId: String) -> URL? {
@@ -56,21 +61,40 @@ final class AudioCacheService {
         cacheLock.unlock()
         guard !exists else { return }
 
-        do {
-            let (tempURL, _) = try await session.download(from: remoteURL)
-            // 移入缓存目录时持锁
-            cacheLock.lock()
-            defer { cacheLock.unlock() }
-            // 二次检查：可能在我们下载期间已有其他协程完成缓存
-            if FileManager.default.fileExists(atPath: dest.path) {
-                try? FileManager.default.removeItem(at: tempURL)
-                return
+        // 包装成 Task 并注册，便于 clearCache 取消
+        let task = Task<Void, Never> { [weak self] in
+            guard let self else { return }
+            do {
+                let (tempURL, _) = try await self.session.download(from: remoteURL)
+                // 检查取消
+                if Task.isCancelled {
+                    try? FileManager.default.removeItem(at: tempURL)
+                    return
+                }
+                // 移入缓存目录时持锁
+                self.cacheLock.lock()
+                defer { self.cacheLock.unlock() }
+                // 二次检查：可能在我们下载期间已有其他协程完成缓存
+                if FileManager.default.fileExists(atPath: dest.path) {
+                    try? FileManager.default.removeItem(at: tempURL)
+                    return
+                }
+                try FileManager.default.moveItem(at: tempURL, to: dest)
+                self.evictIfNeededLocked()
+            } catch {
+                // 缓存失败不影响播放，静默忽略
             }
-            try FileManager.default.moveItem(at: tempURL, to: dest)
-            evictIfNeededLocked()
-        } catch {
-            // 缓存失败不影响播放，静默忽略
         }
+
+        downloadsLock.lock()
+        activeDownloads[postId] = task
+        downloadsLock.unlock()
+
+        await task.value
+
+        downloadsLock.lock()
+        activeDownloads.removeValue(forKey: postId)
+        downloadsLock.unlock()
     }
 
     func removeCache(for postId: String) {
@@ -94,6 +118,13 @@ final class AudioCacheService {
     }
 
     func clearCache() {
+        // 取消所有进行中的下载
+        downloadsLock.lock()
+        let tasks = Array(activeDownloads.values)
+        activeDownloads.removeAll()
+        downloadsLock.unlock()
+        for task in tasks { task.cancel() }
+
         cacheLock.lock()
         defer { cacheLock.unlock() }
         let fm = FileManager.default
