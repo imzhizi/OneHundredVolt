@@ -290,7 +290,9 @@ class AudioPlayerManager private constructor(private val context: Context) {
     private fun advanceToNext() {
         if (_playlist.isNotEmpty()) {
             val finished = _playlist.first()
-            audioCache.removeCache(finished.id)
+            // v1.6 改动：不再立即删除缓存
+            //  - LRU 策略自动管理 500MB 上限
+            //  - 用户可能重听已完结单集，立即删除体验不佳
             _playlist.removeAt(0)
             _state.value = _state.value.copy(
                 sessionCompletedIds = _state.value.sessionCompletedIds + finished.id
@@ -476,7 +478,7 @@ class AudioPlayerManager private constructor(private val context: Context) {
     fun removeFromPlaylist(index: Int) {
         if (index !in _playlist.indices) return
         val deletingCurrent = _playlist[index].id == _state.value.currentItem?.id
-        audioCache.removeCache(_playlist[index].id)
+        // v1.6 改动：不再立即删除缓存（同上，依赖 LRU 策略）
         _playlist.removeAt(index)
         if (_playlist.isEmpty()) {
             clearAll()
