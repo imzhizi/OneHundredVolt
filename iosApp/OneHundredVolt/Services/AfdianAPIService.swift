@@ -1,4 +1,5 @@
 import Foundation
+import Shared
 import WebKit
 
 /// 爱发电 API 服务层
@@ -17,28 +18,35 @@ final class AfdianAPIService {
 
     // MARK: - Cookie
 
+    /// Shared.SecureStorage 实例（替代原 KeychainService，跨平台存储）
+    private let secureStorage = Shared.SecureStorage()
+
+    /// auth_token 存储键（v1.6 改用 Shared.SecureStorage 后跨 iOS/Android 一致）
+    private static let authTokenKey = "auth_token"
+
     private var authToken: String? {
-        KeychainService.load(forKey: KeychainService.authTokenKey)
+        secureStorage.get(key: AfdianAPIService.authTokenKey)
     }
 
     var isLoggedIn: Bool { authToken != nil }
 
     func logout() {
-        KeychainService.delete(forKey: KeychainService.authTokenKey)
+        secureStorage.delete(key: AfdianAPIService.authTokenKey)
         // 同时清除 WKWebView 的所有 cookie / 缓存，避免再次打开登录页时自动已登录
         clearWebViewCookies()
     }
 
     private func clearWebViewCookies() {
-        // v1.6 修复：仅清除 afdian.com 域名下的数据，不影响其他站点。
-        // 原实现 WKWebsiteDataStore.removeData(ofTypes: for: records)
-        // 无差别清空所有站点数据（cookie / 缓存 / IndexedDB 等），会误删
-        // WKWebView 访问过的其他网站（如 GitHub 登录态）。
+        // v1.6 改动：使用 Shared.WebSessionCleaner（KMP 统一逻辑）
+        //  + WKWebsiteDataStore 清除 afdian.com 域名下的数据（不影响其他站点）
+        // Shared 后端：NSHTTPCookieStorage 同步清除
+        // WKWebView 端：WKWebsiteDataStore 清除缓存/IndexedDB
+        Task {
+            try? await Shared.WebSessionCleaner().clearAfdianSession()
+        }
         let dataStore = WKWebsiteDataStore.default()
         let dataTypes = WKWebsiteDataStore.allWebsiteDataTypes()
         dataStore.fetchDataRecords(ofTypes: dataTypes) { records in
-            // WKWebsiteDataRecord 仅暴露 displayName（域名）属性，
-            // 通过它过滤 afdian 域名即可。
             let afdianRecords = records.filter { record in
                 record.displayName.lowercased().contains("afdian")
             }
