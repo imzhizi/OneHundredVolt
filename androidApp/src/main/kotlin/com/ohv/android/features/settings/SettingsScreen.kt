@@ -506,10 +506,9 @@ private fun calculateCacheSize(): Long {
 }
 
 private fun clearAudioCache() {
-    val cacheDir = java.io.File(com.ohv.shared.platform.getCacheDir())
-    cacheDir.walkTopDown().forEach { file ->
-        if (file.isFile) file.delete()
-    }
+    // v1.6：调用 AudioCacheService.clearCache() 统一管理（与 iOS 对齐）
+    // 避免直接操作文件系统，丢失缓存大小统计等内部状态
+    AudioCacheService.shared.clearCache()
 }
 
 private fun formatCacheSize(bytes: Long): String {
