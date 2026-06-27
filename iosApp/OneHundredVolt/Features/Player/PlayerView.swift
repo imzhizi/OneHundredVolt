@@ -1,4 +1,5 @@
 import SwiftUI
+import Shared
 
 /// 全屏播放器
 struct PlayerView: View {

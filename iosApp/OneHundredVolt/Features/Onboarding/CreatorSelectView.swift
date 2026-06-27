@@ -1,4 +1,5 @@
 import SwiftUI
+import Shared
 
 /// 选择要同步的创作者
 /// - syncCompleteAction：同步全部完成后执行（Onboarding 传入设置 hasCompletedOnboarding；设置页传入 dismiss）

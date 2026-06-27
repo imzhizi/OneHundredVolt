@@ -1,4 +1,5 @@
 import Foundation
+import Shared
 
 @Observable
 final class AlbumViewModel {
@@ -23,7 +24,8 @@ final class AlbumViewModel {
     }
 
     func progressRatio(for item: AudioItem) -> Double {
-        item.progressRatio(from: progressStore)
+        let progress = progressStore.progress(for: item.id)
+        return item.progressRatio(progress: progress)
     }
 
     func isCurrentlyPlaying(_ item: AudioItem) -> Bool {

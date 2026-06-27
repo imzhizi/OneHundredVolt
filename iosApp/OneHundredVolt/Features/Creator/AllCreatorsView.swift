@@ -1,4 +1,5 @@
 import SwiftUI
+import Shared
 
 struct AllCreatorsView: View {
     let creators: [Creator]

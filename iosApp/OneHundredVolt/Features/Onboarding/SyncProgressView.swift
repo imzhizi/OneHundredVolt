@@ -1,4 +1,5 @@
 import SwiftUI
+import Shared
 
 /// 同步进度页
 /// - onComplete：同步成功后用户点击按钮时调用（Onboarding 传入设置 hasCompletedOnboarding 的闭包；设置页传入 dismiss 闭包）

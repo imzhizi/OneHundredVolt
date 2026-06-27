@@ -1,4 +1,5 @@
 import SwiftUI
+import Shared
 import WebKit
 
 /// 在 App 内打开创作者爱发电主页（带已有登录态 Cookie）

@@ -1,4 +1,5 @@
 import Foundation
+import Shared
 import MediaPlayer
 
 /// 锁屏 / 控制中心 Now Playing 集成

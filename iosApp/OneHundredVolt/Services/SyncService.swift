@@ -109,14 +109,14 @@ final class SyncService {
                     db.upsertAudioItems(items)
 
                     var updatedAlbum = album
-                    updatedAlbum.audioCount = items.count
+                    updatedAlbum.audioCount = Int32(items.count)
                     updatedAlbum.totalDuration = items.reduce(0) { $0 + $1.duration }
-                    updatedAlbum.lastSyncedAt = Date()
+                    updatedAlbum.lastSyncedAtDate = Date()
                     db.upsertAlbum(updatedAlbum)
                 }
 
                 var updatedCreator = creator
-                updatedCreator.lastSyncedAt = Date()
+                updatedCreator.lastSyncedAtDate = Date()
                 db.upsertCreator(updatedCreator)
             }
 

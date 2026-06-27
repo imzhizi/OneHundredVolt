@@ -4,11 +4,8 @@ import Shared
 /// 本地数据库服务（Shared.DatabaseService 的 iOS 适配层）
 ///
 /// v1.7 Phase A.3：用 closure callback 替代 100ms 轮询
-///  - Shared 暴露 setOnXxxChangedCallback（Kotlin function type properties）
-///  - iOS 传 Swift closure 注册，Shared 在变更时调用
-///  - 无轮询，UI 更新即时
-///  - 实现细节：受 Kotlin/Native cinterop 限制，abstract class 无法 subclass
-///    改用 function type callbacks（详见 DatabaseListener.kt）
+/// v1.7 Phase B：Models 改 typealias 后，方法直接接受 Creator/Album/AudioItem
+///               （无需转换，已经是 Shared.Creator 等）
 @Observable
 final class DatabaseService {
 
@@ -24,17 +21,17 @@ final class DatabaseService {
         // 注册 callback：Shared 变更时调用
         backend.setOnCreatorsChangedCallback { [weak self] list in
             Task { @MainActor in
-                self?.creators = list.map { Creator($0) }
+                self?.creators = list
             }
         }
         backend.setOnAlbumsChangedCallback { [weak self] list in
             Task { @MainActor in
-                self?.albums = list.map { Album($0) }
+                self?.albums = list
             }
         }
         backend.setOnAudioItemsChangedCallback { [weak self] list in
             Task { @MainActor in
-                self?.audioItems = list.map { AudioItem($0) }
+                self?.audioItems = list
             }
         }
     }
@@ -42,11 +39,11 @@ final class DatabaseService {
     // MARK: - Creator CRUD
 
     func upsertCreator(_ creator: Creator) {
-        backend.upsertCreator(creator: creator.toSharedCreator())
+        backend.upsertCreator(creator: creator)
     }
 
     func upsertCreators(_ list: [Creator]) {
-        backend.upsertCreators(list: list.toSharedCreators())
+        backend.upsertCreators(list: list)
     }
 
     func deleteCreator(id: String) {
@@ -60,33 +57,33 @@ final class DatabaseService {
     // MARK: - Album CRUD
 
     func upsertAlbum(_ album: Album) {
-        backend.upsertAlbum(album: album.toSharedAlbum())
+        backend.upsertAlbum(album: album)
     }
 
     func upsertAlbums(_ list: [Album]) {
-        backend.upsertAlbums(list: list.toSharedAlbums())
+        backend.upsertAlbums(list: list)
     }
 
     func albums(for creatorId: String) -> [Album] {
-        backend.albumsForCreator(creatorId: creatorId).map { Album($0) }
+        backend.albumsForCreator(creatorId: creatorId)
     }
 
     // MARK: - AudioItem CRUD
 
     func upsertAudioItem(_ item: AudioItem) {
-        backend.upsertAudioItem(item: item.toSharedAudioItem())
+        backend.upsertAudioItem(item: item)
     }
 
     func upsertAudioItems(_ list: [AudioItem]) {
-        backend.upsertAudioItems(items: list.toSharedAudioItems())
+        backend.upsertAudioItems(items: list)
     }
 
     func audioItems(for albumId: String) -> [AudioItem] {
-        backend.audioItemsForAlbum(albumId: albumId).map { AudioItem($0) }
+        backend.audioItemsForAlbum(albumId: albumId)
     }
 
     func audioItem(id: String) -> AudioItem? {
-        backend.audioItemById(id: id).map { AudioItem($0) }
+        backend.audioItemById(id: id)
     }
 
     // MARK: - 清空

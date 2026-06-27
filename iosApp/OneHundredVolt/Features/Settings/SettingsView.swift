@@ -1,4 +1,5 @@
 import SwiftUI
+import Shared
 
 struct SettingsView: View {
     @Environment(\.dismiss) private var dismiss

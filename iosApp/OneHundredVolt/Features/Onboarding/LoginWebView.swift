@@ -1,4 +1,5 @@
 import SwiftUI
+import Shared
 import WebKit
 
 // MARK: - 预加载器（WelcomeView 出现时提前加载网页，消除点击后的白屏延迟）

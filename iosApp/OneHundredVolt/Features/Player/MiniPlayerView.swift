@@ -1,4 +1,5 @@
 import SwiftUI
+import Shared
 
 /// 底部迷你播放条
 struct MiniPlayerView: View {

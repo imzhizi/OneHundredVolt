@@ -1,4 +1,5 @@
 import SwiftUI
+import Shared
 
 struct AlbumDetailView: View {
     let album: Album

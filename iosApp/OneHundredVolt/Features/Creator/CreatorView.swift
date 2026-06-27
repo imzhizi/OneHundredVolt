@@ -1,4 +1,5 @@
 import SwiftUI
+import Shared
 
 /// 创作者详情页：本地专辑列表 + 跳转爱发电主页
 struct CreatorView: View {
@@ -165,7 +166,7 @@ final class CreatorViewModel {
     var albums: [Album] = []
 
     var totalAudioCount: Int {
-        albums.reduce(0) { $0 + $1.audioCount }
+        albums.reduce(0) { $0 + Int($1.audioCount) }
     }
 
     init(creator: Creator) {

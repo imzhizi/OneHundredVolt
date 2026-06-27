@@ -144,9 +144,9 @@ final class AfdianAPIService {
                     title: item.title,
                     coverUrl: item.cover,
                     description: item.content?.isEmpty == false ? item.content : nil,
-                    audioCount: item.postCount,
+                    audioCount: Int32(item.postCount),
                     totalDuration: 0,
-                    sortOrder: allAlbums.count,
+                    sortOrder: Int32(allAlbums.count),
                     lastSyncedAt: nil,
                     isAccessible: item.bought == 1  // bought=0 暂设 false，SyncService 会探测并更新
                 )
@@ -211,9 +211,8 @@ final class AfdianAPIService {
                         title: post.title,
                         coverUrl: post.cover,
                         duration: TimeInterval(post.ext?.audioDuration ?? 0),
-                        sortOrder: post.rank ?? 0,
-                        publishTime: Date(timeIntervalSince1970: TimeInterval(post.publishTime ?? 0)),
-                        audioUrl: nil
+                        sortOrder: Int64(post.rank ?? 0),
+                        publishTime: Int64(post.publishTime ?? 0)
                     )
                 }
             allItems.append(contentsOf: items)

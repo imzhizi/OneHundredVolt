@@ -1,4 +1,5 @@
 import Foundation
+import Shared
 import AVFoundation
 import SwiftUI
 
@@ -90,17 +91,22 @@ final class AudioPlayerService {
     private static let playlistKey = "saved_playlist_v1"
 
     private func persistPlaylist() {
+        // v1.7 Phase B：Shared.AudioItem 不再 Swift Codable
+        // 改存 playlist id 列表，恢复时从 Shared.DatabaseService 查
         if playlist.isEmpty {
             defaults.removeObject(forKey: Self.playlistKey)
-        } else if let data = try? JSONEncoder().encode(playlist) {
-            defaults.set(data, forKey: Self.playlistKey)
+        } else {
+            let ids = playlist.map { $0.id }
+            defaults.set(ids, forKey: Self.playlistKey)
         }
     }
 
     private func restorePlaylist() {
-        guard let data = defaults.data(forKey: Self.playlistKey),
-              let items = try? JSONDecoder().decode([AudioItem].self, from: data),
-              !items.isEmpty else { return }
+        guard let ids = defaults.array(forKey: Self.playlistKey) as? [String],
+              !ids.isEmpty else { return }
+        // 从 Shared.DatabaseService 按 id 查
+        let items = ids.compactMap { DatabaseService.shared.audioItem(id: $0) }
+        guard !items.isEmpty else { return }
         playlist = items
         currentItem = items[0]
         duration = items[0].duration
