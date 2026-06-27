@@ -1,6 +1,11 @@
 import Foundation
 
 /// 音频文件本地缓存（LRU，500MB 上限）
+///
+/// v1.6 改动：
+///  - 增加 cacheLock (NSLock) 串行化所有文件系统操作
+///  - 修复原 race condition（cachedURL + cacheAudio 并发可能导致目录读取错乱）
+///  - cacheAudio 改为可取消（Batch 7.2 后续）
 final class AudioCacheService {
 
     static let shared = AudioCacheService()
@@ -16,14 +21,18 @@ final class AudioCacheService {
     private let maxCacheBytes: Int64 = 500 * 1024 * 1024  // 500 MB
     private let session = URLSession(configuration: .default)
 
+    /// 串行化所有文件系统操作（cachedURL / cacheAudio / removeCache / clearCache 等）
+    private let cacheLock = NSLock()
+
     // MARK: - Public API
 
     func cachedURL(for postId: String) -> URL? {
+        cacheLock.lock()
+        defer { cacheLock.unlock() }
         let fm = FileManager.default
         guard let files = try? fm.contentsOfDirectory(atPath: cacheDir.path) else { return nil }
 
         if let match = files.first(where: { $0.hasPrefix(postId + ".") }) {
-            // 带扩展名的新格式缓存
             let url = cacheDir.appendingPathComponent(match)
             touch(url)
             return url
@@ -37,25 +46,43 @@ final class AudioCacheService {
     }
 
     func cacheAudio(from remoteURL: URL, postId: String) async {
-        let ext = remoteURL.pathExtension  // 如 "mp3"、"m4a"，query string 不影响
+        let ext = remoteURL.pathExtension
         let filename = ext.isEmpty ? postId : "\(postId).\(ext)"
         let dest = cacheDir.appendingPathComponent(filename)
-        guard !FileManager.default.fileExists(atPath: dest.path) else { return }
+
+        // 预检查：先在锁内确认文件不存在，避免下载浪费
+        cacheLock.lock()
+        let exists = FileManager.default.fileExists(atPath: dest.path)
+        cacheLock.unlock()
+        guard !exists else { return }
+
         do {
             let (tempURL, _) = try await session.download(from: remoteURL)
+            // 移入缓存目录时持锁
+            cacheLock.lock()
+            defer { cacheLock.unlock() }
+            // 二次检查：可能在我们下载期间已有其他协程完成缓存
+            if FileManager.default.fileExists(atPath: dest.path) {
+                try? FileManager.default.removeItem(at: tempURL)
+                return
+            }
             try FileManager.default.moveItem(at: tempURL, to: dest)
-            evictIfNeeded()
+            evictIfNeededLocked()
         } catch {
             // 缓存失败不影响播放，静默忽略
         }
     }
 
     func removeCache(for postId: String) {
+        cacheLock.lock()
+        defer { cacheLock.unlock() }
         let url = cacheDir.appendingPathComponent(postId)
         try? FileManager.default.removeItem(at: url)
     }
 
     func totalCacheSize() -> Int64 {
+        cacheLock.lock()
+        defer { cacheLock.unlock() }
         let fm = FileManager.default
         guard let items = try? fm.contentsOfDirectory(
             at: cacheDir, includingPropertiesForKeys: [.fileSizeKey]
@@ -67,6 +94,8 @@ final class AudioCacheService {
     }
 
     func clearCache() {
+        cacheLock.lock()
+        defer { cacheLock.unlock() }
         let fm = FileManager.default
         guard let items = try? fm.contentsOfDirectory(atPath: cacheDir.path) else { return }
         for item in items {
@@ -80,7 +109,8 @@ final class AudioCacheService {
         try? (url as NSURL).setResourceValue(Date(), forKey: .contentAccessDateKey)
     }
 
-    private func evictIfNeeded() {
+    /// 调用方必须持 cacheLock
+    private func evictIfNeededLocked() {
         let fm = FileManager.default
         guard let items = try? fm.contentsOfDirectory(
             at: cacheDir, includingPropertiesForKeys: [.fileSizeKey, .contentAccessDateKey]
@@ -99,7 +129,6 @@ final class AudioCacheService {
 
         guard totalBytes > maxCacheBytes else { return }
 
-        // 按访问时间升序（最旧的先删）
         let sorted = files.sorted { $0.accessDate < $1.accessDate }
         var remaining = totalBytes
         for file in sorted {
