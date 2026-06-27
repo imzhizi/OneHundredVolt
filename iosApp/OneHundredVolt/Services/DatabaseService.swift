@@ -1,61 +1,73 @@
 import Foundation
+import Shared
 
-/// 本地数据库服务（基于 JSON 文件 + 内存缓存，无需第三方依赖）
-/// 存储路径：Documents/ohv_db.json
+/// 本地数据库服务（Shared.DatabaseService 的 iOS 适配层）
+///
+/// v1.6：基于 shared module 的 DatabaseService（KMP）作为存储后端
+///  - 写入：直接调用 Shared.DatabaseService（原子写入、损坏恢复）
+///  - 读取：轮询 Shared.DatabaseService 的 StateFlow 并同步到本地 @Observable 属性
+///
+/// @Observable 保留以维持 SwiftUI views 的观察语义
 @Observable
 final class DatabaseService {
 
     static let shared = DatabaseService()
 
-    // MARK: - 内存存储
+    // MARK: - 内存存储（订阅 Shared.StateFlow 同步）
 
     private(set) var creators: [Creator] = []
     private(set) var albums: [Album] = []
     private(set) var audioItems: [AudioItem] = []
 
-    private let dbFileURL: URL = {
-        let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
-        return docs.appendingPathComponent("ohv_db.json")
-    }()
+    /// Shared 模块的 KMP 数据库（用 Shared. 前缀避免与本类名冲突）
+    private let backend: Shared.DatabaseService = Shared.DatabaseService.companion.shared
 
-    /// 异步写磁盘专用队列（串行，避免并发写冲突）
-    private let ioQueue = DispatchQueue(label: "com.ohv.db.io", qos: .utility)
-
-    /// 防抖 save：当批量写入时合并成一次磁盘写
-    private var pendingSave = false
+    /// 轮询 Shared.DatabaseService StateFlow 变化的 Task
+    private var observerTask: Task<Void, Never>?
 
     private init() {
-        load()
+        // 同步初始值
+        syncFromBackend()
+
+        // 轮询后续变更（StateFlow 在 iOS KMP 不暴露 AsyncSequence，
+        // 用 Task 周期 poll 替代，100ms 间隔足够 UI 流畅）
+        observerTask = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 100_000_000)
+                guard let self else { return }
+                await MainActor.run {
+                    self.syncFromBackend()
+                }
+            }
+        }
+    }
+
+    /// 从 Shared.DatabaseService 同步 StateFlow 值到本地 @Observable 属性
+    private func syncFromBackend() {
+        let sharedCreators = (backend.creators.value as? [Shared.Creator]) ?? []
+        let sharedAlbums = (backend.albums.value as? [Shared.Album]) ?? []
+        let sharedItems = (backend.audioItems.value as? [Shared.AudioItem]) ?? []
+        creators = sharedCreators.map { Creator($0) }
+        albums = sharedAlbums.map { Album($0) }
+        audioItems = sharedItems.map { AudioItem($0) }
+    }
+
+    deinit {
+        observerTask?.cancel()
     }
 
     // MARK: - Creator CRUD
 
     func upsertCreator(_ creator: Creator) {
-        if let idx = creators.firstIndex(where: { $0.id == creator.id }) {
-            creators[idx] = creator
-        } else {
-            creators.append(creator)
-        }
-        save()
+        backend.upsertCreator(creator: creator.toSharedCreator())
     }
 
-    /// 批量 upsert：内存全部更新完毕后只写一次磁盘
     func upsertCreators(_ list: [Creator]) {
-        for c in list {
-            if let idx = creators.firstIndex(where: { $0.id == c.id }) {
-                creators[idx] = c
-            } else {
-                creators.append(c)
-            }
-        }
-        save()
+        backend.upsertCreators(list: list.toSharedCreators())
     }
 
     func deleteCreator(id: String) {
-        creators.removeAll { $0.id == id }
-        albums.removeAll { $0.creatorId == id }
-        audioItems.removeAll { $0.creatorId == id }
-        save()
+        backend.deleteCreator(id: id)
     }
 
     func selectedCreators() -> [Creator] {
@@ -65,113 +77,38 @@ final class DatabaseService {
     // MARK: - Album CRUD
 
     func upsertAlbum(_ album: Album) {
-        if let idx = albums.firstIndex(where: { $0.id == album.id }) {
-            albums[idx] = album
-        } else {
-            albums.append(album)
-        }
-        save()
+        backend.upsertAlbum(album: album.toSharedAlbum())
     }
 
-    /// 批量 upsert：内存全部更新完毕后只写一次磁盘
     func upsertAlbums(_ list: [Album]) {
-        for a in list {
-            if let idx = albums.firstIndex(where: { $0.id == a.id }) {
-                albums[idx] = a
-            } else {
-                albums.append(a)
-            }
-        }
-        save()
+        backend.upsertAlbums(list: list.toSharedAlbums())
     }
 
     func albums(for creatorId: String) -> [Album] {
-        albums.filter { $0.creatorId == creatorId }
-              .sorted { $0.sortOrder < $1.sortOrder }
+        backend.albumsForCreator(creatorId: creatorId).map { Album($0) }
     }
 
     // MARK: - AudioItem CRUD
 
     func upsertAudioItem(_ item: AudioItem) {
-        if let idx = audioItems.firstIndex(where: { $0.id == item.id }) {
-            var updated = item
-            updated.audioUrl = audioItems[idx].audioUrl   // 保留已缓存的 audioUrl
-            audioItems[idx] = updated
-        } else {
-            audioItems.append(item)
-        }
-        save()
+        backend.upsertAudioItem(item: item.toSharedAudioItem())
     }
 
-    /// 批量 upsert：内存全部更新完毕后只写一次磁盘
     func upsertAudioItems(_ list: [AudioItem]) {
-        for item in list {
-            if let idx = audioItems.firstIndex(where: { $0.id == item.id }) {
-                var updated = item
-                updated.audioUrl = audioItems[idx].audioUrl
-                audioItems[idx] = updated
-            } else {
-                audioItems.append(item)
-            }
-        }
-        save()
+        backend.upsertAudioItems(items: list.toSharedAudioItems())
     }
 
     func audioItems(for albumId: String) -> [AudioItem] {
-        audioItems.filter { $0.albumId == albumId }
-                  .sorted { $0.sortOrder < $1.sortOrder }
+        backend.audioItemsForAlbum(albumId: albumId).map { AudioItem($0) }
     }
 
     func audioItem(id: String) -> AudioItem? {
-        audioItems.first { $0.id == id }
+        backend.audioItemById(id: id).map { AudioItem($0) }
     }
 
     // MARK: - 清空
 
     func clearAll() {
-        creators.removeAll()
-        albums.removeAll()
-        audioItems.removeAll()
-        pendingSave = false
-        ioQueue.async { [dbFileURL] in
-            try? FileManager.default.removeItem(at: dbFileURL)
-        }
-    }
-
-    // MARK: - 持久化（异步写磁盘，防抖合并）
-
-    private struct DBSnapshot: Codable {
-        var creators: [Creator]
-        var albums: [Album]
-        var audioItems: [AudioItem]
-    }
-
-    /// 标记需要保存，用 DispatchQueue 防抖——同一 run loop 内多次调用只写一次磁盘
-    private func save() {
-        guard !pendingSave else { return }
-        pendingSave = true
-        // 下一个 run loop tick 执行，让当前批量操作全部完成后再读取快照
-        DispatchQueue.main.async { [weak self] in
-            self?.flushToDisk()
-        }
-    }
-
-    private func flushToDisk() {
-        pendingSave = false
-        let snapshot = DBSnapshot(creators: creators, albums: albums, audioItems: audioItems)
-        // 序列化在主线程（访问 @Observable 属性安全），写文件在 IO 队列
-        guard let data = try? JSONEncoder().encode(snapshot) else { return }
-        ioQueue.async { [dbFileURL] in
-            try? data.write(to: dbFileURL, options: .atomic)
-        }
-    }
-
-    private func load() {
-        guard let data = try? Data(contentsOf: dbFileURL),
-              let snapshot = try? JSONDecoder().decode(DBSnapshot.self, from: data)
-        else { return }
-        creators   = snapshot.creators
-        albums     = snapshot.albums
-        audioItems = snapshot.audioItems
+        backend.clearAll()
     }
 }
