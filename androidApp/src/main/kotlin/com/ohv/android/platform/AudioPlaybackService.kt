@@ -86,13 +86,14 @@ class AudioPlaybackService : MediaSessionService() {
     }
 
     override fun onGetSession(controllerInfo: MediaSession.ControllerInfo): MediaSession? {
-        tanhProcessor.setEnabled(kvStore.getBoolean("loudness_boost_enabled", false))
+        // v1.6：响度默认开启（与 AudioPlayerManager 初始值一致）
+        tanhProcessor.setEnabled(kvStore.getBoolean("loudness_boost_enabled", true))
         return mediaSession
     }
 
     override fun onTaskRemoved(rootIntent: android.content.Intent?) {
         PlaybackProgressStore.shared.flushToDisk()
-        tanhProcessor.setEnabled(kvStore.getBoolean("loudness_boost_enabled", false))
+        tanhProcessor.setEnabled(kvStore.getBoolean("loudness_boost_enabled", true))
         super.onTaskRemoved(rootIntent)
     }
 

@@ -68,7 +68,11 @@ class AudioPlayerManager private constructor(private val context: Context) {
         private var instance: AudioPlayerManager? = null
 
         private const val PLAYBACK_RATE_KEY = "playback_rate"
-        private const val LOUDNESS_BOOST_KEY = "loudness_boost_enabled"
+        // v1.6：响度增强默认开启（改善有声内容普遍音量偏低的问题）
+//  - 旧值 false：保持向后兼容已升级用户的偏好
+//  - 新装用户获得 true：首启即开启响度增强
+//  - 当前无 UI 开关（v1.6 plan：先做能力不做 UI），setLoudnessBoostEnabled API 保留
+private const val LOUDNESS_BOOST_KEY = "loudness_boost_enabled"
         private const val PLAYLIST_KEY = "saved_playlist_v1"
         private val json = Json { ignoreUnknownKeys = true }
 
@@ -103,7 +107,11 @@ class AudioPlayerManager private constructor(private val context: Context) {
     private val _state = MutableStateFlow(
         PlayerState(
             playbackRate = kvStore.getFloat(PLAYBACK_RATE_KEY, 1.0f).takeIf { it > 0f } ?: 1.0f,
-            loudnessBoostEnabled = kvStore.getBoolean(LOUDNESS_BOOST_KEY, false)
+            // v1.6：响度增强默认开启
+            //  - 多数有声内容音量偏低，Tanh 压缩能显著改善听感
+            //  - 用户可在 v1.7+ 通过设置开关关闭
+            //  - 当前没有 UI 开关，保留 API 以便未来扩展
+            loudnessBoostEnabled = kvStore.getBoolean(LOUDNESS_BOOST_KEY, true)
         )
     )
     val state: StateFlow<PlayerState> = _state.asStateFlow()
