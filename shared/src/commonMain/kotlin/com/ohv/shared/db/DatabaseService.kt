@@ -45,56 +45,46 @@ class DatabaseService(documentsDir: String = getDocumentsDir()) {
     internal val _audioItems = MutableStateFlow<List<AudioItem>>(emptyList())
     val audioItems: StateFlow<List<AudioItem>> = _audioItems.asStateFlow()
 
-    // ─── Listener 管理 ──────────────────────────────────────────────────────
+    // ─── Callback API（替代 Listener 接口）───────────────────────────────────
 
-    /**
-     * 变更通知监听器
-     *
-     * 三种数据各自独立通知，便于监听方只关心自己需要的数据。
-     * 回调在 Shared 内部线程触发，调用方需自行切到主线程（@MainActor / Dispatchers.Main）。
-     */
-    interface Listener {
-        fun onCreatorsChanged(creators: List<Creator>)
-        fun onAlbumsChanged(albums: List<Album>)
-        fun onAudioItemsChanged(items: List<AudioItem>)
+    // 由于 Kotlin/Native cinterop 不支持 abstract class 的 subclass，
+    // 改用 function type properties。Swift 可直接传 closure。
+    // 限制：仅支持单个回调（当前只有一个 iOS wrapper 使用，足够）
+
+    // 必须 @JvmField / 不带 backing field，否则 Swift 看不到 setter
+    var creatorsCallback: DatabaseChangeCallback? = null
+        private set
+    var albumsCallback: AlbumsChangeCallback? = null
+        private set
+    var audioItemsCallback: AudioItemsChangeCallback? = null
+        private set
+
+    fun setOnCreatorsChangedCallback(callback: DatabaseChangeCallback?) {
+        creatorsCallback = callback
+        // 立即推送当前状态
+        callback?.invoke(_creators.value)
     }
 
-    // 用 AtomicReference 持有不可变快照，实现 lock-free 的并发安全
-    private val listenersRef = kotlin.concurrent.atomics.AtomicReference<List<Listener>>(emptyList())
-
-    fun addListener(listener: Listener) {
-        while (true) {
-            val current = listenersRef.load()
-            val updated = current + listener
-            if (listenersRef.compareAndSet(expectedValue = current, newValue = updated)) {
-                // 注册时立即推送当前状态（避免遗漏初始值）
-                listener.onCreatorsChanged(_creators.value)
-                listener.onAlbumsChanged(_albums.value)
-                listener.onAudioItemsChanged(_audioItems.value)
-                return
-            }
-        }
+    fun setOnAlbumsChangedCallback(callback: AlbumsChangeCallback?) {
+        albumsCallback = callback
+        callback?.invoke(_albums.value)
     }
 
-    fun removeListener(listener: Listener) {
-        while (true) {
-            val current = listenersRef.load()
-            val updated = current.filter { it !== listener }
-            if (listenersRef.compareAndSet(expectedValue = current, newValue = updated)) return
-            if (updated.size == current.size) return  // 没找到，提前返回
-        }
+    fun setOnAudioItemsChangedCallback(callback: AudioItemsChangeCallback?) {
+        audioItemsCallback = callback
+        callback?.invoke(_audioItems.value)
     }
 
     private fun notifyCreatorsChanged(list: List<Creator>) {
-        listenersRef.load().forEach { it.onCreatorsChanged(list) }
+        creatorsCallback?.invoke(list)
     }
 
     private fun notifyAlbumsChanged(list: List<Album>) {
-        listenersRef.load().forEach { it.onAlbumsChanged(list) }
+        albumsCallback?.invoke(list)
     }
 
     private fun notifyAudioItemsChanged(list: List<AudioItem>) {
-        listenersRef.load().forEach { it.onAudioItemsChanged(list) }
+        audioItemsCallback?.invoke(list)
     }
 
     // ─── 文件 IO 与持久化 ─────────────────────────────────────────────────

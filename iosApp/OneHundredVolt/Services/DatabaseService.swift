@@ -3,57 +3,40 @@ import Shared
 
 /// 本地数据库服务（Shared.DatabaseService 的 iOS 适配层）
 ///
-/// v1.6：基于 shared module 的 DatabaseService（KMP）作为存储后端
-///  - 写入：直接调用 Shared.DatabaseService（原子写入、损坏恢复）
-///  - 读取：轮询 Shared.DatabaseService 的 StateFlow 并同步到本地 @Observable 属性
-///
-/// @Observable 保留以维持 SwiftUI views 的观察语义
+/// v1.7 Phase A.3：用 closure callback 替代 100ms 轮询
+///  - Shared 暴露 setOnXxxChangedCallback（Kotlin function type properties）
+///  - iOS 传 Swift closure 注册，Shared 在变更时调用
+///  - 无轮询，UI 更新即时
+///  - 实现细节：受 Kotlin/Native cinterop 限制，abstract class 无法 subclass
+///    改用 function type callbacks（详见 DatabaseListener.kt）
 @Observable
 final class DatabaseService {
 
     static let shared = DatabaseService()
 
-    // MARK: - 内存存储（订阅 Shared.StateFlow 同步）
-
     private(set) var creators: [Creator] = []
     private(set) var albums: [Album] = []
     private(set) var audioItems: [AudioItem] = []
 
-    /// Shared 模块的 KMP 数据库（用 Shared. 前缀避免与本类名冲突）
-    private let backend: Shared.DatabaseService = Shared.DatabaseService.companion.shared
-
-    /// 轮询 Shared.DatabaseService StateFlow 变化的 Task
-    private var observerTask: Task<Void, Never>?
+    private let backend = Shared.DatabaseService.companion.shared
 
     private init() {
-        // 同步初始值
-        syncFromBackend()
-
-        // 轮询后续变更（StateFlow 在 iOS KMP 不暴露 AsyncSequence，
-        // 用 Task 周期 poll 替代，100ms 间隔足够 UI 流畅）
-        observerTask = Task { [weak self] in
-            while !Task.isCancelled {
-                try? await Task.sleep(nanoseconds: 100_000_000)
-                guard let self else { return }
-                await MainActor.run {
-                    self.syncFromBackend()
-                }
+        // 注册 callback：Shared 变更时调用
+        backend.setOnCreatorsChangedCallback { [weak self] list in
+            Task { @MainActor in
+                self?.creators = list.map { Creator($0) }
             }
         }
-    }
-
-    /// 从 Shared.DatabaseService 同步 StateFlow 值到本地 @Observable 属性
-    private func syncFromBackend() {
-        let sharedCreators = (backend.creators.value as? [Shared.Creator]) ?? []
-        let sharedAlbums = (backend.albums.value as? [Shared.Album]) ?? []
-        let sharedItems = (backend.audioItems.value as? [Shared.AudioItem]) ?? []
-        creators = sharedCreators.map { Creator($0) }
-        albums = sharedAlbums.map { Album($0) }
-        audioItems = sharedItems.map { AudioItem($0) }
-    }
-
-    deinit {
-        observerTask?.cancel()
+        backend.setOnAlbumsChangedCallback { [weak self] list in
+            Task { @MainActor in
+                self?.albums = list.map { Album($0) }
+            }
+        }
+        backend.setOnAudioItemsChangedCallback { [weak self] list in
+            Task { @MainActor in
+                self?.audioItems = list.map { AudioItem($0) }
+            }
+        }
     }
 
     // MARK: - Creator CRUD
