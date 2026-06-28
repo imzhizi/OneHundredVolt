@@ -179,7 +179,10 @@ final class AudioPlayerService {
             progressStore.markCompleted(for: id)
             playlist.removeAll { $0.id == id }
         }
-        loadAndPlay(item: playlist[0])
+        // v1.7 Defer 1：使用 AVPlayer.replaceCurrentItem 优化（iOS 16+）
+        // 原实现每次都重建 AVPlayer + AVPlayerItem + observers，浪费
+        // 优化后：仅替换 playerItem，保留 player 实例、observers、audio session
+        replaceCurrentItemAndPlay(item: playlist[0])
     }
 
     func playPrevious() {
@@ -341,6 +344,109 @@ final class AudioPlayerService {
                 await MainActor.run {
                     self.isLoading = false
                     self.loadError = error.localizedDescription
+                }
+            }
+        }
+    }
+
+    /// 优化版切歌：复用现有 AVPlayer，仅替换 AVPlayerItem（v1.7 Defer 1）
+    ///
+    /// 与 loadAndPlay 的差异：
+    ///  - 不调用 stopCurrentPlayer（保留 player、observers、audio session）
+    ///  - 仅 replaceCurrentItem 替换音频源
+    ///  - 已有 observers 自动生效（无需重新订阅）
+    ///
+    /// 适用场景：playNext / 拖拽后 current 变成新项（已验证播放中的播放器可用）
+    /// 不适用：首次播放、clearAll 后、player 不存在（fallback 到 loadAndPlay）
+    private func replaceCurrentItemAndPlay(item: AudioItem) {
+        guard player != nil else {
+            loadAndPlay(item: item)
+            return
+        }
+        saveCurrentProgress()
+
+        currentItem = item
+        isLoading = true
+        isPlaying = false
+        loadError = nil
+        duration = item.duration
+
+        progressStore.setLastPlayed(postId: item.id, creatorId: item.creatorId)
+
+        Task {
+            do {
+                let url: URL
+                if let localURL = audioCache.cachedURL(for: item.id) {
+                    url = localURL
+                } else {
+                    let urlString = try await api.fetchAudioURL(postId: item.id)
+                    guard let parsed = URL(string: urlString) else { throw APIError.noAudioURL }
+                    url = parsed
+                    // 后台缓存
+                    Task { await self.audioCache.cacheAudio(from: parsed, postId: item.id) }
+                }
+                await MainActor.run {
+                    self.replacePlayerItem(url: url, item: item)
+                }
+            } catch {
+                await MainActor.run {
+                    self.isLoading = false
+                    self.loadError = error.localizedDescription
+                }
+            }
+        }
+    }
+
+    /// 替换 playerItem 并启动播放（主线程）
+    private func replacePlayerItem(url: URL, item: AudioItem) {
+        let newItem = playerFactory.makePlayerItem(url: url)
+
+        // 配置音频混合（响度增强）
+        Task { [weak self] in
+            guard let self else { return }
+            let mix = await LoudnessBoostTap.makeAudioMix(for: newItem)
+            await MainActor.run {
+                guard self.currentItem?.id == item.id else { return }
+                newItem.audioMix = mix
+            }
+        }
+
+        // 清理旧 playerItem 观察者（只换 item，不换 player）
+        statusObserver?.invalidate()
+
+        // 替换并播放（iOS 16+ replaceCurrentItem API）
+        let oldPlayer = self.player
+        oldPlayer?.replaceCurrentItem(with: newItem)
+        self.playerItem = newItem
+        oldPlayer?.play()
+
+        // 订阅新 item 的状态
+        statusObserver = newItem.observe(\.status, options: [.new]) { [weak self] avPlayerItem, _ in
+            Task { @MainActor [weak self] in
+                guard let self, self.currentItem?.id == item.id else { return }
+                switch avPlayerItem.status {
+                case .readyToPlay:
+                    self.isLoading = false
+                    let d = avPlayerItem.duration.seconds
+                    self.duration = d.isNaN || d <= 0 ? item.duration : d
+                    let saved = self.progressStore.progress(for: item.id)
+                    if saved > 5 {
+                        let target = CMTime(seconds: saved, preferredTimescale: 600)
+                        let capturedPlayer = self.player
+                        capturedPlayer?.seek(to: target, toleranceBefore: .zero, toleranceAfter: .zero) { [weak self] finished in
+                            Task { @MainActor [weak self] in
+                                guard let self, self.currentItem?.id == item.id else { return }
+                                if finished { self.isPlaying = true }
+                            }
+                        }
+                    } else {
+                        self.isPlaying = true
+                    }
+                case .failed:
+                    self.isLoading = false
+                    self.loadError = avPlayerItem.error?.localizedDescription ?? "播放失败"
+                default:
+                    break
                 }
             }
         }
