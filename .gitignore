@@ -30,3 +30,6 @@ local.properties
 *.apk
 *.keystore
 *.jks
+
+# Claude Code
+.claude/
