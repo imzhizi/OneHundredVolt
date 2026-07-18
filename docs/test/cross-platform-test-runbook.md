@@ -2,7 +2,7 @@
 
 ## Purpose
 
-This project-level skill is the execution guide for validating OneHundredVolt on Android and iOS. Use it with [TEST_PLAN.md](../TEST_PLAN.md): the test plan defines coverage; this runbook defines a repeatable workflow, evidence requirements, and environment triage.
+This project-level skill is the execution guide for validating OneHundredVolt on Android and iOS. Use it with [TEST_PLAN.md](TEST_PLAN.md): the test plan defines coverage; this runbook defines a repeatable workflow, evidence requirements, and environment triage.
 
 Do not treat a build, a simulator boot, or an API request alone as a passing functional test. A feature passes only when its user-visible result and its persisted state have both been checked.
 

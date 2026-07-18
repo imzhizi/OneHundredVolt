@@ -81,9 +81,9 @@ DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer \
 | [docs/architecture.md](docs/architecture.md) | 跨平台架构（共享层 / 平台独立层 / 差异清单） |
 | [docs/CHANGELOG.md](docs/CHANGELOG.md) | 版本变更日志 |
 | [docs/plans/v1.6-cross-platform-review.md](docs/plans/v1.6-cross-platform-review.md) | 当前进行中的 v1.6 实施计划 |
-| [docs/TEST_PLAN.md](docs/TEST_PLAN.md) | Android/iOS Debug、Release 和单集增量回归方案 |
-| [docs/skills/cross-platform-test-runbook.md](docs/skills/cross-platform-test-runbook.md) | 双端测试执行手册：环境排障、取证与安全边界 |
-| [docs/plans/v1.9-dual-channel-testing-and-debug-panel.md](docs/plans/v1.9-dual-channel-testing-and-debug-panel.md) | iOS 稳定版 XCTest 与 beta Computer Use 双通道，以及 Debug 面板设计方案 |
+| [docs/test/TEST_PLAN.md](docs/test/TEST_PLAN.md) | Android/iOS Debug、Release 和单集增量回归方案 |
+| [docs/test/cross-platform-test-runbook.md](docs/test/cross-platform-test-runbook.md) | 双端测试执行手册：环境排障、取证与安全边界 |
+| [docs/test/dual-channel-testing-and-debug-panel.md](docs/test/dual-channel-testing-and-debug-panel.md) | iOS 稳定版 XCTest 与 beta Computer Use 双通道，以及 Debug 面板设计方案 |
 | [docs/plans/v1.8-single-episode-updates.md](docs/plans/v1.8-single-episode-updates.md) | 单集增量更新、提醒和 Debug fixture 设计 |
 
 ## 技术栈
