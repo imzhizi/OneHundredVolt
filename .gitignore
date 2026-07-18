@@ -26,6 +26,7 @@ memory/
 
 # Gradle / Android
 .gradle/
+.gradle-cache/
 local.properties
 *.apk
 *.keystore
