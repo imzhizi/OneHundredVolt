@@ -11,6 +11,10 @@ final class MockAVPlayer: AVPlayerProtocol {
     var pendingSeekCompletion: ((Bool) -> Void)?
     private var timeObserverBlock: ((CMTime) -> Void)?
 
+    func play() {
+        rate = 1
+    }
+
     func pause() {
         pauseCallCount += 1
         rate = 0
@@ -44,6 +48,8 @@ final class MockAVPlayer: AVPlayerProtocol {
     func removeTimeObserver(_ observer: Any) {
         timeObserverBlock = nil
     }
+
+    func replaceCurrentItemForOhv(with item: AVPlayerItem) {}
 
     /// 测试中手动触发 seek completion
     func fireSeekCompletion(finished: Bool = true) {

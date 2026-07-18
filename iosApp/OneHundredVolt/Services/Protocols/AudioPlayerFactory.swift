@@ -11,19 +11,15 @@ protocol AVPlayerProtocol: AnyObject {
     func addPeriodicTimeObserver(forInterval interval: CMTime, queue: DispatchQueue?, using block: @escaping @Sendable (CMTime) -> Void) -> Any
     func removeTimeObserver(_ observer: Any)
     /// v1.7 Defer 1：替换当前播放项（iOS 16+），保留 player 实例 + observers + audio session
-    func replaceCurrentItem(with item: AVPlayerItem)
+    func replaceCurrentItemForOhv(with item: AVPlayerItem)
 }
 
 extension AVPlayer: AVPlayerProtocol {
-    func replaceCurrentItem(with item: AVPlayerItem) {
+    func replaceCurrentItemForOhv(with item: AVPlayerItem) {
         // iOS 16+ 提供 replaceCurrentItem API
-        // AVPlayer 本质上继承 AVQueuePlayer（自 iOS 16），可直接调用
-        if #available(iOS 16.0, *) {
-            self.replaceCurrentItem(with: item)
-        } else {
-            // iOS 15 fallback：直接 setItem
-            self.replaceCurrentItem(with: item)
-        }
+        // Keep the protocol name distinct so this call dispatches to AVPlayer's
+        // framework implementation instead of recursing into the adapter.
+        self.replaceCurrentItem(with: item)
     }
 }
 

@@ -68,6 +68,9 @@ DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer \
 ./gradlew :shared:testDebugUnitTest     # 共享单元测试（JVM）
 ./gradlew :androidApp:testDebugUnitTest # Android 单元测试
 ./gradlew :shared:allTests              # 共享所有测试
+./scripts/test-android-debug.sh         # Android Debug 安装、启动和 UI dump
+./scripts/test-ios-simulator.sh        # iOS 模拟器安装、启动和截图
+./scripts/test-ios-tests.sh             # iOS XCTest/Swift Testing；优先保存 xcresult，兼容 Xcode beta 收尾卡住
 ```
 
 ## 文档导航
@@ -78,6 +81,8 @@ DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer \
 | [docs/architecture.md](docs/architecture.md) | 跨平台架构（共享层 / 平台独立层 / 差异清单） |
 | [docs/CHANGELOG.md](docs/CHANGELOG.md) | 版本变更日志 |
 | [docs/plans/v1.6-cross-platform-review.md](docs/plans/v1.6-cross-platform-review.md) | 当前进行中的 v1.6 实施计划 |
+| [docs/TEST_PLAN.md](docs/TEST_PLAN.md) | Android/iOS Debug、Release 和单集增量回归方案 |
+| [docs/plans/v1.8-single-episode-updates.md](docs/plans/v1.8-single-episode-updates.md) | 单集增量更新、提醒和 Debug fixture 设计 |
 
 ## 技术栈
 

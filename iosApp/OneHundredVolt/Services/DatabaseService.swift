@@ -68,6 +68,18 @@ final class DatabaseService {
         backend.albumsForCreator(creatorId: creatorId)
     }
 
+    func markAllAlbumsDue() {
+        backend.markAllAlbumsDue()
+    }
+
+    func markAlbumUpdatesRead(albumId: String) {
+        backend.markAlbumUpdatesRead(albumId: albumId)
+    }
+
+    func markAllAlbumUpdatesRead() {
+        backend.markAllAlbumUpdatesRead()
+    }
+
     // MARK: - AudioItem CRUD
 
     func upsertAudioItem(_ item: AudioItem) {
@@ -84,6 +96,10 @@ final class DatabaseService {
 
     func audioItem(id: String) -> AudioItem? {
         backend.audioItemById(id: id)
+    }
+
+    func deleteAudioItem(id: String) {
+        backend.deleteAudioItem(id: id)
     }
 
     // MARK: - 清空

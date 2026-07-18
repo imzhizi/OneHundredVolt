@@ -10,6 +10,7 @@ struct HomeView: View {
     @State private var scrollViewID = UUID()
 
     private let player = AudioPlayerService.shared
+    private let db = DatabaseService.shared
 
     private let maxVisibleCreators = 3
 
@@ -81,6 +82,17 @@ struct HomeView: View {
                 viewModel.load()
             }
             .onReceive(NotificationCenter.default.publisher(for: .didSyncComplete)) { _ in
+                viewModel.load()
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .didIncrementalUpdate)) { _ in
+                viewModel.load()
+            }
+            // Kotlin/Native callbacks update the Swift wrapper on MainActor after
+            // initial view creation, so refresh once the restored database arrives.
+            .onChange(of: db.creators.count) { _, _ in
+                viewModel.load()
+            }
+            .onChange(of: db.albums.count) { _, _ in
                 viewModel.load()
             }
             .onReceive(NotificationCenter.default.publisher(for: .showPlaylistSheet)) { _ in
@@ -394,7 +406,7 @@ private struct AlbumCardView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: Theme.Spacing.xs) {
-            ZStack(alignment: .bottomTrailing) {
+            ZStack {
                 CachedImage(urlString: album.coverUrl) {
                     RoundedRectangle(cornerRadius: Theme.CornerRadius.cover)
                         .fill(Theme.Colors.cardBackground)
@@ -412,6 +424,19 @@ private struct AlbumCardView: View {
                         .background(Color.black.opacity(0.55))
                         .clipShape(RoundedRectangle(cornerRadius: 5))
                         .padding(4)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
+                }
+
+                if album.unreadUpdateCount > 0 {
+                    Text("\(min(album.unreadUpdateCount, 99))")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundColor(.black)
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 3)
+                        .background(Theme.Colors.accent)
+                        .clipShape(Capsule())
+                        .padding(4)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
                 }
             }
 

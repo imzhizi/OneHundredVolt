@@ -98,10 +98,18 @@ final class AudioCacheService {
     }
 
     func removeCache(for postId: String) {
+        downloadsLock.lock()
+        let activeTask = activeDownloads.removeValue(forKey: postId)
+        downloadsLock.unlock()
+        activeTask?.cancel()
+
         cacheLock.lock()
         defer { cacheLock.unlock() }
-        let url = cacheDir.appendingPathComponent(postId)
-        try? FileManager.default.removeItem(at: url)
+        guard let files = try? FileManager.default.contentsOfDirectory(atPath: cacheDir.path) else { return }
+        let fm = FileManager.default
+        for file in files where file == postId || file.hasPrefix(postId + ".") {
+            try? fm.removeItem(at: cacheDir.appendingPathComponent(file))
+        }
     }
 
     func totalCacheSize() -> Int64 {

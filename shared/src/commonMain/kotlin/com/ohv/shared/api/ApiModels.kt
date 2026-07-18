@@ -9,7 +9,7 @@ import kotlinx.serialization.Serializable
 internal data class SponsoringResponse(
     val ec: Int,
     val em: String? = null,
-    val data: SponsoringData
+    val data: SponsoringData? = null
 ) {
     @Serializable
     data class SponsoringData(val sponsoring: List<SponsoringItem>)
@@ -36,7 +36,7 @@ internal data class SponsoringResponse(
 internal data class AlbumListResponse(
     val ec: Int,
     val em: String? = null,
-    val data: AlbumListData
+    val data: AlbumListData? = null
 ) {
     @Serializable
     data class AlbumListData(
@@ -61,7 +61,7 @@ internal data class AlbumListResponse(
 internal data class AlbumCatalogResponse(
     val ec: Int,
     val em: String? = null,
-    val data: CatalogData
+    val data: CatalogData? = null
 ) {
     @Serializable
     data class CatalogData(

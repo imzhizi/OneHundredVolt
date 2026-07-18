@@ -8,6 +8,9 @@ struct SettingsView: View {
     @State private var showClearCacheAlert = false
     @State private var showResyncFlow = false
     @State private var showLoginFlow = false
+    #if DEBUG
+    @State private var showDebugPanel = false
+    #endif
     @State private var cacheSize: Int64 = 0
 
     private let api = AfdianAPIService.shared
@@ -16,6 +19,7 @@ struct SettingsView: View {
     private let progressStore = PlaybackProgressStore.shared
     private let player = AudioPlayerService.shared
     private let audioCache = AudioCacheService.shared
+    private let incremental = IncrementalUpdateCoordinator.shared
 
     var body: some View {
         NavigationStack {
@@ -153,6 +157,20 @@ struct SettingsView: View {
                         sectionHeader("关于")
                     }
                     .listRowBackground(Theme.Colors.cardBackground)
+
+                    #if DEBUG
+                    Section {
+                        Button {
+                            showDebugPanel = true
+                        } label: {
+                            Label("打开诊断面板", systemImage: "ladybug.fill")
+                                .foregroundColor(Theme.Colors.accent)
+                        }
+                    } header: {
+                        sectionHeader("调试诊断")
+                    }
+                    .listRowBackground(Theme.Colors.cardBackground)
+                    #endif
                 }
                 .listStyle(.insetGrouped)
                 .scrollContentBackground(.hidden)
@@ -203,6 +221,29 @@ struct SettingsView: View {
             .fullScreenCover(isPresented: $showLoginFlow) {
                 LoginWebView(hasCompletedOnboarding: .constant(false))
             }
+            #if DEBUG
+            .sheet(isPresented: $showDebugPanel) {
+                DebugDiagnosticsView(
+                    onClearData: clearData,
+                    onClearProgress: { progressStore.clearAll() },
+                    onClearCache: {
+                        audioCache.clearCache()
+                        cacheSize = 0
+                    },
+                    onMarkAllDue: { incremental.markAllDue() },
+                    onCheckAll: { await incremental.checkAll() },
+                    onClearUpdateReminders: { db.markAllAlbumUpdatesRead() },
+                    onDeleteAudio: { id in
+                        guard let item = db.audioItems.first(where: { $0.id == id }) else {
+                            return "未找到单集：\(id)"
+                        }
+                        audioCache.removeCache(for: item.id)
+                        db.deleteAudioItem(id: item.id)
+                        return "已删除本地单集：\(item.title.prefix(20))"
+                    }
+                )
+            }
+            #endif
         }
     }
 
@@ -210,6 +251,9 @@ struct SettingsView: View {
 
     private func logout() {
         player.clearAll()
+        #if DEBUG
+        Shared.DebugCatalogFixtures.shared.clearAll()
+        #endif
         api.logout()
         db.clearAll()
         progressStore.clearAll()
@@ -222,6 +266,9 @@ struct SettingsView: View {
     private func clearData() {
         // clearAll() 会停播、清空播放列表、让 MiniPlayer 消失
         player.clearAll()
+        #if DEBUG
+        Shared.DebugCatalogFixtures.shared.clearAll()
+        #endif
         db.clearAll()
         progressStore.clearAll()
         // v1.6 同步清空音频缓存（与 Android SettingsScreen clearCache 对齐）
@@ -242,6 +289,190 @@ struct SettingsView: View {
         Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "1.0.0"
     }
 }
+
+#if DEBUG
+private struct DebugDiagnosticsView: View {
+    @Environment(\.dismiss) private var dismiss
+    @State private var refreshToken = 0
+
+    let onClearData: () -> Void
+    let onClearProgress: () -> Void
+    let onClearCache: () -> Void
+    let onMarkAllDue: () -> Void
+    let onCheckAll: () async -> String
+    let onClearUpdateReminders: () -> Void
+    let onDeleteAudio: (String) -> String
+    @State private var deleteEpisodeId = ""
+    @State private var fixtureAlbumId = ""
+    @State private var fixtureJson = ""
+    @State private var incrementalStatus: String?
+
+    var body: some View {
+        NavigationStack {
+            VStack(alignment: .leading, spacing: 12) {
+                Text("日志 \(Shared.DebugDiagnostics.shared.count()) 条")
+                    .font(.caption)
+                    .foregroundColor(Theme.Colors.textSecondary)
+                ScrollView {
+                    Text(Shared.DebugDiagnostics.shared.exportText(maxEntries: 120).isEmpty ? "暂无诊断日志" : Shared.DebugDiagnostics.shared.exportText(maxEntries: 120))
+                        .font(.system(size: 10, design: .monospaced))
+                        .foregroundColor(Theme.Colors.textPrimary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .textSelection(.enabled)
+                }
+                .id(refreshToken)
+                .frame(maxHeight: 360)
+                .padding(8)
+                .background(Theme.Colors.cardBackground)
+                .clipShape(RoundedRectangle(cornerRadius: 8))
+
+                HStack {
+                    Button("清除日志") {
+                        Shared.DebugDiagnostics.shared.clear()
+                        refreshToken += 1
+                    }
+                    Button("刷新") { refreshToken += 1 }
+                }
+                .buttonStyle(.bordered)
+
+                HStack {
+                    Button("清除进度") { onClearProgress() }
+                    Button("清除缓存") { onClearCache() }
+                    Button("清除数据") { onClearData() }
+                }
+                .buttonStyle(.bordered)
+                .foregroundColor(Theme.Colors.warning)
+
+                HStack {
+                    Button("标记待检查") {
+                        onMarkAllDue()
+                        incrementalStatus = "已将所有专辑标记为待检查"
+                    }
+                    Button("立即检查") {
+                        incrementalStatus = "增量检查中..."
+                        Task { incrementalStatus = await onCheckAll() }
+                    }
+                }
+                .buttonStyle(.bordered)
+                HStack {
+                    Button("清除提醒") {
+                        onClearUpdateReminders()
+                        incrementalStatus = "已清除所有更新提醒"
+                    }
+                    Button("填首条 ID") {
+                        deleteEpisodeId = DatabaseService.shared.audioItems.first?.id ?? ""
+                        incrementalStatus = deleteEpisodeId.isEmpty ? "没有可填入的本地单集" : "已填入首条单集 ID"
+                    }
+                }
+                .buttonStyle(.bordered)
+                Text("目录 fixture")
+                    .font(.caption)
+                    .foregroundColor(Theme.Colors.textPrimary)
+                TextField("专辑 ID", text: $fixtureAlbumId)
+                    .textFieldStyle(.roundedBorder)
+                HStack {
+                    Button("填首条专辑") {
+                        fixtureAlbumId = DatabaseService.shared.albums.first?.id ?? ""
+                        incrementalStatus = fixtureAlbumId.isEmpty ? "没有可用专辑" : "已填入首条专辑 ID"
+                    }
+                    Button("应用 JSON") {
+                        applyFixture()
+                    }
+                    .disabled(fixtureAlbumId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || fixtureJson.isEmpty)
+                    Button("清除 fixture") {
+                        clearFixture()
+                    }
+                }
+                .buttonStyle(.bordered)
+                TextEditor(text: $fixtureJson)
+                    .font(.system(size: 10, design: .monospaced))
+                    .frame(minHeight: 72, maxHeight: 120)
+                    .padding(4)
+                    .background(Theme.Colors.cardBackground)
+                    .clipShape(RoundedRectangle(cornerRadius: 6))
+                HStack {
+                    Button("新增") { applyFixtureTemplate("new") }
+                    Button("变更") { applyFixtureTemplate("changed") }
+                    Button("空目录") { applyFixtureTemplate("empty") }
+                    Button("重复 ID") { applyFixtureTemplate("duplicate") }
+                }
+                .buttonStyle(.bordered)
+                HStack {
+                    Button("缺最后一条") { applyFixtureTemplate("omit_last") }
+                    Button("模拟错误") { applyFixtureTemplate("error") }
+                    Button("模拟超时") { applyFixtureTemplate("timeout") }
+                }
+                .buttonStyle(.bordered)
+                TextField("单集 ID", text: $deleteEpisodeId)
+                    .textFieldStyle(.roundedBorder)
+                Button("删除指定单集") {
+                    incrementalStatus = onDeleteAudio(deleteEpisodeId.trimmingCharacters(in: .whitespacesAndNewlines))
+                    if incrementalStatus?.hasPrefix("已删除") == true {
+                        deleteEpisodeId = ""
+                    }
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(deleteEpisodeId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                if let incrementalStatus {
+                    Text(incrementalStatus)
+                        .font(.caption2)
+                        .foregroundColor(Theme.Colors.textSecondary)
+                }
+                Spacer()
+            }
+            .padding()
+            .background(Theme.Colors.background.ignoresSafeArea())
+            .navigationTitle("调试诊断")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("完成") { dismiss() }
+                }
+            }
+        }
+    }
+
+    private func applyFixtureTemplate(_ scenario: String) {
+        let albumId = fixtureAlbumId.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !albumId.isEmpty else {
+            incrementalStatus = "请先填写专辑 ID"
+            return
+        }
+        let items = DatabaseService.shared.audioItems(for: albumId)
+        fixtureJson = Shared.DebugCatalogFixtures.shared.templateJson(
+            albumId: albumId,
+            scenario: scenario,
+            existingItems: items
+        )
+        applyFixture()
+    }
+
+    private func applyFixture() {
+        let albumId = fixtureAlbumId.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !albumId.isEmpty else {
+            incrementalStatus = "请先填写专辑 ID"
+            return
+        }
+        incrementalStatus = Shared.DebugCatalogFixtures.shared.setJsonSafely(
+            albumId: albumId,
+            fixtureJson: fixtureJson
+        )
+        refreshToken += 1
+    }
+
+    private func clearFixture() {
+        let albumId = fixtureAlbumId.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !albumId.isEmpty else {
+            incrementalStatus = "请先填写专辑 ID"
+            return
+        }
+        Shared.DebugCatalogFixtures.shared.clearFixture(albumId: albumId)
+        fixtureJson = ""
+        incrementalStatus = "已清除该专辑 fixture"
+        refreshToken += 1
+    }
+}
+#endif
 
 // MARK: - 通知名
 

@@ -77,13 +77,6 @@ struct LoginWebView: View {
                             }
                         }
                         .disabled(viewModel.isConfirming)
-
-                        // 备用按钮：跳过验证直接进入首页（用于验证流程卡住的情况）
-                        Button("跳过，直接进入首页") {
-                            NotificationCenter.default.post(name: .didCompleteOnboarding, object: nil)
-                        }
-                        .font(Theme.Typography.caption)
-                        .foregroundColor(Theme.Colors.textSecondary)
                     }
                     .padding(.horizontal, Theme.Spacing.md)
                     .padding(.vertical, Theme.Spacing.md)
@@ -168,8 +161,7 @@ struct WebViewRepresentable: UIViewRepresentable {
             let isLoginPage = path == "/login" || path.hasPrefix("/login")
 
             if !isLoginPage {
-                // 离开了登录页：显示手动按钮 + 同时尝试自动提取
-                DispatchQueue.main.async { self.viewModel.showManualButton = true }
+                // 离开了登录页：自动尝试提取登录 cookie
                 viewModel.tryExtractCookie(webView: webView)
             }
         }
@@ -185,7 +177,6 @@ struct WebViewRepresentable: UIViewRepresentable {
 @Observable
 final class LoginWebViewModel {
     var isLoading = true
-    var showManualButton = false
     var isConfirming = false
     var showCreatorSelect = false
     var showError = false
@@ -202,23 +193,14 @@ final class LoginWebViewModel {
     private func doPoll(webView: WKWebView) {
         WKWebsiteDataStore.default().httpCookieStore.getAllCookies { [weak self] cookies in
             guard let self else { return }
-            // 宽泛匹配：先精确找 auth_token，再找 afdian 域下含 token/auth 的 cookie
-            let tokenCookieNames = ["auth_token", "authToken", "token", "auth", "session", "sid"]
-            let found = cookies.first(where: { tokenCookieNames.contains($0.name.lowercased()) })
-                ?? cookies.first(where: { $0.domain.contains("afdian") && $0.name.contains("token") })
-                ?? cookies.first(where: { $0.domain.contains("afdian") && $0.name.contains("auth") })
-            if let c = found {
+            if let token = AfdianLoginCookie.authToken(from: cookies) {
                 DispatchQueue.main.async {
-                    KeychainService.save(c.value, forKey: KeychainService.authTokenKey)
-                    self.showCreatorSelect = true
+                    self.completeLogin(with: token)
                 }
                 return
             }
             self.pollCount += 1
-            guard self.pollCount < 20 else {
-                DispatchQueue.main.async { self.showManualButton = true }
-                return
-            }
+            guard self.pollCount < 20 else { return }
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self, weak webView] in
                 guard let self, let webView else { return }
                 self.doPoll(webView: webView)
@@ -236,27 +218,29 @@ final class LoginWebViewModel {
             WKWebsiteDataStore.default().httpCookieStore.getAllCookies { cont.resume(returning: $0) }
         }
 
-        // 找 auth_token（尝试多个可能的 cookie 名）
-        let tokenCookieNames = ["auth_token", "authToken", "token", "auth", "session", "sid"]
-        let tokenCookie = allCookies.first(where: { tokenCookieNames.contains($0.name.lowercased()) })
-            ?? allCookies.first(where: { $0.domain.contains("afdian") && $0.name.contains("token") })
-            ?? allCookies.first(where: { $0.domain.contains("afdian") && $0.name.contains("auth") })
-
-        if let cookie = tokenCookie {
-            KeychainService.save(cookie.value, forKey: KeychainService.authTokenKey)
-            isConfirming = false
-            showCreatorSelect = true
+        if let token = AfdianLoginCookie.authToken(from: allCookies) {
+            completeLogin(with: token)
         } else {
-            // 没找到 token cookie，把所有爱发电相关 cookie 列出来作为错误信息
-            let afdianCookies = allCookies
-                .filter { $0.domain.contains("afdian") }
-                .map { "\($0.name) (\($0.domain))" }
-                .joined(separator: "\n")
+            let afdianCookies = AfdianLoginCookie.diagnosticCookieNames(from: allCookies)
             isConfirming = false
             errorMessage = afdianCookies.isEmpty
                 ? "未检测到爱发电 Cookie，请确认已在网页中完成登录"
                 : "已检测到以下 Cookie，但未找到登录凭据：\n\n\(afdianCookies)"
             showError = true
         }
+    }
+
+    private func completeLogin(with token: String) {
+        KeychainService.save(token, forKey: KeychainService.authTokenKey)
+
+        guard AfdianAPIService.shared.isLoggedIn else {
+            isConfirming = false
+            errorMessage = "登录凭据未能安全保存，请重试；若问题持续，请重新打开应用后登录"
+            showError = true
+            return
+        }
+
+        isConfirming = false
+        showCreatorSelect = true
     }
 }

@@ -11,11 +11,12 @@ typealias SharedHttpError = Shared.ApiError.HttpError
 /// 通过 SharedErrorBridge 捕获并转换为 iOS NotificationCenter 事件，
 /// 让现有 view 层继续以 Notification.Name.tokenExpired 等形式响应。
 ///
-/// 当前 iOS 仍使用 URLSession + 原 APIError，所以本文件暂时仅作为适配层文档。
+/// 当前 iOS 的同步和 API 包装都使用 Shared 实现，桥接层负责把 Kotlin
+/// 异常转换为现有的 NotificationCenter 事件。
 enum SharedErrorBridge {
 
     /// Shared.ApiError → iOS Notification
-    static func handle(_ error: Error) {
+    static func handle(_ error: Shared.KotlinException) {
         if error is SharedNotLoggedInError {
             NotificationCenter.default.post(name: .tokenExpired, object: nil)
             return

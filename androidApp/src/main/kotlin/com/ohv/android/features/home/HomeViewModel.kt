@@ -3,11 +3,15 @@ package com.ohv.android.features.home
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.ohv.android.platform.AudioPlayerManager
+import com.ohv.shared.api.AfdianApiService
 import com.ohv.shared.db.DatabaseService
 import com.ohv.shared.models.Album
 import com.ohv.shared.models.Creator
+import com.ohv.shared.platform.SecureStorage
 import com.ohv.shared.progress.PlaybackProgressStore
+import com.ohv.shared.sync.IncrementalUpdateService
 import kotlinx.coroutines.flow.*
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 
 data class HomeUiState(
@@ -25,6 +29,8 @@ class HomeViewModel : ViewModel() {
     private val db = DatabaseService.shared
     private val progressStore = PlaybackProgressStore.shared
     private val player = AudioPlayerManager.shared
+    private val api = AfdianApiService(SecureStorage())
+    private val incrementalUpdate = IncrementalUpdateService(api, db)
 
     private val _uiState = MutableStateFlow(HomeUiState())
     val uiState: StateFlow<HomeUiState> = _uiState.asStateFlow()
@@ -60,6 +66,11 @@ class HomeViewModel : ViewModel() {
                 )
             }.collect { state ->
                 _uiState.value = state
+            }
+        }
+        viewModelScope.launch(Dispatchers.IO) {
+            if (api.isLoggedIn) {
+                incrementalUpdate.checkDueAlbums()
             }
         }
     }

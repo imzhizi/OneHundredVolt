@@ -7,6 +7,7 @@ struct TestDeps {
     let store: MockPlaybackProgressStore
     let cache: MockAudioCacheService
     let defaults: UserDefaults
+    let playlistItemResolver: (String) -> AudioItem?
     let service: AudioPlayerService
 
     init(savedProgress: [String: TimeInterval] = [:], playlistItems: [AudioItem]? = nil) {
@@ -20,8 +21,11 @@ struct TestDeps {
         let suiteName = "test-\(UUID().uuidString)"
         defaults = UserDefaults(suiteName: suiteName)!
 
-        if let items = playlistItems, let data = try? JSONEncoder().encode(items) {
-            defaults.set(data, forKey: "saved_playlist_v1")
+        let persistedItems = playlistItems ?? []
+        let itemMap = Dictionary(uniqueKeysWithValues: persistedItems.map { ($0.id, $0) })
+        playlistItemResolver = { itemMap[$0] }
+        if !persistedItems.isEmpty {
+            defaults.set(persistedItems.map(\.id), forKey: "saved_playlist_v1")
         }
         defaults.removeObject(forKey: "playback_rate")
 
@@ -30,7 +34,8 @@ struct TestDeps {
             api: api,
             progressStore: store,
             audioCache: cache,
-            defaults: defaults
+            defaults: defaults,
+            playlistItemResolver: playlistItemResolver
         )
     }
 }
@@ -44,6 +49,6 @@ func makeItem(id: String = "post-1", duration: TimeInterval = 120) -> AudioItem 
         coverUrl: nil,
         duration: duration,
         sortOrder: 0,
-        publishTime: Date()
+        publishTime: 0
     )
 }

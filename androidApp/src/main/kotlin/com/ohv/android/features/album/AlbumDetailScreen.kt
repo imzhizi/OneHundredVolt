@@ -104,8 +104,13 @@ fun AlbumDetailScreen(
     val uiState by vm.uiState.collectAsState()
     val player = AudioPlayerManager.shared
     val playerState by player.state.collectAsState()
+    val db = DatabaseService.shared
 
     var browserUrl by remember { mutableStateOf<String?>(null) }
+
+    LaunchedEffect(albumId) {
+        db.markAlbumUpdatesRead(albumId)
+    }
 
     Scaffold(
         containerColor = OhvColors.Background,

@@ -590,14 +590,28 @@ private fun AlbumCard(
             .clickable(onClick = onClick),
         verticalArrangement = Arrangement.spacedBy(6.dp)
     ) {
-        AsyncImage(
-            model = album.coverUrl,
-            contentDescription = album.title,
-            modifier = Modifier
-                .size(120.dp)
-                .clip(RoundedCornerShape(8.dp))
-                .background(OhvColors.CardBackground)
-        )
+        Box {
+            AsyncImage(
+                model = album.coverUrl,
+                contentDescription = album.title,
+                modifier = Modifier
+                    .size(120.dp)
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(OhvColors.CardBackground)
+            )
+            if (album.unreadUpdateCount > 0) {
+                Badge(
+                    modifier = Modifier.align(Alignment.TopEnd).padding(4.dp),
+                    containerColor = OhvColors.Accent,
+                    contentColor = Color.Black
+                ) {
+                    Text(
+                        text = album.unreadUpdateCount.coerceAtMost(99).toString(),
+                        fontSize = 10.sp
+                    )
+                }
+            }
+        }
         Text(
             text = album.title,
             color = OhvColors.White,

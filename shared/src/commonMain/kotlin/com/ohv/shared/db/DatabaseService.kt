@@ -3,6 +3,7 @@ package com.ohv.shared.db
 import com.ohv.shared.models.Album
 import com.ohv.shared.models.AudioItem
 import com.ohv.shared.models.Creator
+import com.ohv.shared.diagnostics.DebugDiagnostics
 import com.ohv.shared.platform.getDocumentsDir
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -13,6 +14,7 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import kotlin.concurrent.atomics.AtomicBoolean
+import kotlin.concurrent.atomics.AtomicLong
 import kotlin.concurrent.atomics.ExperimentalAtomicApi
 
 /**
@@ -32,6 +34,9 @@ class DatabaseService(documentsDir: String = getDocumentsDir()) {
     companion object {
         // 延迟初始化：避免单元测试加载类时触发 getDocumentsDir() 调用
         val shared: DatabaseService by lazy { DatabaseService() }
+
+        private const val SAVE_ACTIVE_MASK = Long.MIN_VALUE
+        private const val SAVE_VERSION_MASK = Long.MAX_VALUE
     }
 
     // ─── 内部 StateFlow（仅 commonMain 内部 / Android 使用）────────────────
@@ -97,7 +102,8 @@ class DatabaseService(documentsDir: String = getDocumentsDir()) {
 
     private val ioScope = CoroutineScope(Dispatchers.Default + SupervisorJob())
 
-    private val pendingSave = AtomicBoolean(false)
+    private val saveState = AtomicLong(0L)
+    private val clearRequested = AtomicBoolean(false)
 
     private val json = Json {
         ignoreUnknownKeys = true
@@ -175,12 +181,63 @@ class DatabaseService(documentsDir: String = getDocumentsDir()) {
     fun albumsForCreator(creatorId: String): List<Album> =
         _albums.value.filter { it.creatorId == creatorId }.sortedBy { it.sortOrder }
 
+    fun albumById(id: String): Album? =
+        _albums.value.firstOrNull { it.id == id }
+
+    /** 将所有专辑标记为待检查，供 Debug 和手工重试使用。 */
+    fun markAllAlbumsDue() {
+        _albums.update { albums ->
+            albums.map { it.copy(lastCheckedAt = 0L) }
+        }
+        notifyAlbumsChanged(_albums.value)
+        scheduleSave()
+        DebugDiagnostics.log("db", "all albums marked due")
+    }
+
+    fun markAlbumUpdatesRead(albumId: String) {
+        var changed = false
+        _albums.update { albums ->
+            albums.map { album ->
+                if (album.id == albumId && album.unreadUpdateCount != 0) {
+                    changed = true
+                    album.copy(unreadUpdateCount = 0)
+                } else {
+                    album
+                }
+            }
+        }
+        if (changed) {
+            notifyAlbumsChanged(_albums.value)
+            scheduleSave()
+        }
+    }
+
+    fun markAllAlbumUpdatesRead() {
+        var changed = false
+        _albums.update { albums ->
+            albums.map { album ->
+                if (album.unreadUpdateCount != 0) {
+                    changed = true
+                    album.copy(unreadUpdateCount = 0)
+                } else {
+                    album
+                }
+            }
+        }
+        if (changed) {
+            notifyAlbumsChanged(_albums.value)
+            scheduleSave()
+        }
+    }
+
     // ─── AudioItem CRUD ───────────────────────────────────────────────────────
 
     fun upsertAudioItem(item: AudioItem) {
         _audioItems.update { current ->
             val list = current.toMutableList()
-            val idx = list.indexOfFirst { it.id == item.id }
+            // 一个帖子可以同时归属于多个专辑；本地目录项的主键因此是
+            // (albumId, id)，而播放进度和缓存仍按帖子 id 共享。
+            val idx = list.indexOfFirst { it.id == item.id && it.albumId == item.albumId }
             if (idx >= 0) {
                 // 保留已缓存的 audioUrl
                 val updated = item.copy().also { it.audioUrl = list[idx].audioUrl }
@@ -198,7 +255,7 @@ class DatabaseService(documentsDir: String = getDocumentsDir()) {
         _audioItems.update { current ->
             val mutable = current.toMutableList()
             for (item in items) {
-                val idx = mutable.indexOfFirst { it.id == item.id }
+                val idx = mutable.indexOfFirst { it.id == item.id && it.albumId == item.albumId }
                 if (idx >= 0) {
                     val updated = item.copy().also { it.audioUrl = mutable[idx].audioUrl }
                     mutable[idx] = updated
@@ -218,22 +275,49 @@ class DatabaseService(documentsDir: String = getDocumentsDir()) {
     fun audioItemById(id: String): AudioItem? =
         _audioItems.value.firstOrNull { it.id == id }
 
+    fun deleteAudioItem(id: String) {
+        val removed = _audioItems.value.filter { it.id == id }
+        if (removed.isEmpty()) return
+
+        _audioItems.update { items -> items.filterNot { it.id == id } }
+        val affectedAlbumIds = removed.map { it.albumId }.toSet()
+        val remainingByAlbum = _audioItems.value.groupBy { it.albumId }
+        _albums.update { albums ->
+            albums.map { album ->
+                if (album.id !in affectedAlbumIds) {
+                    album
+                } else {
+                    val remaining = remainingByAlbum[album.id].orEmpty()
+                    album.copy(
+                        audioCount = remaining.size,
+                        totalDuration = remaining.sumOf { it.duration }
+                    )
+                }
+            }
+        }
+        notifyAudioItemsChanged(_audioItems.value)
+        notifyAlbumsChanged(_albums.value)
+        scheduleSave()
+        DebugDiagnostics.log("db", "audio item deleted", details = mapOf("id" to id))
+    }
+
     // ─── 清空 ─────────────────────────────────────────────────────────────────
 
     fun clearAll() {
         _creators.value = emptyList()
         _albums.value = emptyList()
         _audioItems.value = emptyList()
-        pendingSave.store(false)
         notifyCreatorsChanged(emptyList())
         notifyAlbumsChanged(emptyList())
         notifyAudioItemsChanged(emptyList())
-        ioScope.launch {
-            try {
-                fileAccess.deleteFile(dbFilePath)
-            } catch (_: Exception) {
-            }
+        scheduleSave(removeFile = true)
+        try {
+            // Keep clearAll observable immediately; the pending worker repeats the
+            // deletion if an earlier write was already in progress.
+            fileAccess.deleteFile(dbFilePath)
+        } catch (_: Exception) {
         }
+        DebugDiagnostics.log("db", "database cleared")
     }
 
     // ─── 持久化（防抖，100ms 内多次调用只写一次）─────────────────────────────
@@ -245,15 +329,42 @@ class DatabaseService(documentsDir: String = getDocumentsDir()) {
         val audioItems: List<AudioItem>
     )
 
-    private fun scheduleSave() {
-        if (!pendingSave.compareAndSet(expectedValue = false, newValue = true)) return
-        ioScope.launch {
-            delay(100)
-            try {
-                flushToDisk()
-            } finally {
-                pendingSave.store(false)
+    private fun scheduleSave(removeFile: Boolean = false) {
+        clearRequested.store(removeFile)
+
+        var startWorker = false
+        while (true) {
+            val state = saveState.load()
+            val next = ((state and SAVE_VERSION_MASK) + 1L) or SAVE_ACTIVE_MASK
+            if (saveState.compareAndSet(state, next)) {
+                startWorker = state and SAVE_ACTIVE_MASK == 0L
+                break
             }
+        }
+
+        if (startWorker) {
+            ioScope.launch {
+                delay(100)
+                persistPendingChanges()
+            }
+        }
+    }
+
+    private fun persistPendingChanges() {
+        while (true) {
+            val state = saveState.load()
+            if (clearRequested.load()) {
+                try {
+                    fileAccess.deleteFile(dbFilePath)
+                } catch (_: Exception) {
+                }
+            } else {
+                flushToDisk()
+            }
+
+            // A mutation during IO increments the version and keeps the worker active.
+            // Continue until the version saved above is still current.
+            if (saveState.compareAndSet(state, state and SAVE_VERSION_MASK)) return
         }
     }
 
@@ -267,7 +378,10 @@ class DatabaseService(documentsDir: String = getDocumentsDir()) {
             val data = json.encodeToString(snapshot)
             fileAccess.writeAtomic(dbFilePath, data)
         } catch (e: Exception) {
-            println("DatabaseService.flushToDisk failed: $e")
+            DebugDiagnostics.log("db", "database flush failed", "ERROR", mapOf(
+                "errorType" to e::class.simpleName.orEmpty(),
+                "error" to (e.message ?: "unknown")
+            ))
         }
     }
 
@@ -279,12 +393,20 @@ class DatabaseService(documentsDir: String = getDocumentsDir()) {
                 _creators.value = snapshot.creators
                 _albums.value = snapshot.albums
                 _audioItems.value = snapshot.audioItems
+                DebugDiagnostics.log("db", "database loaded", details = mapOf(
+                    "creators" to snapshot.creators.size.toString(),
+                    "albums" to snapshot.albums.size.toString(),
+                    "audioItems" to snapshot.audioItems.size.toString()
+                ))
             }
         } catch (e: Exception) {
             try {
                 fileAccess.renameAsCorrupt(dbFilePath)
             } catch (_: Exception) {
             }
+            DebugDiagnostics.log("db", "database was corrupt; moved aside", "ERROR", mapOf(
+                "errorType" to e::class.simpleName.orEmpty()
+            ))
         }
         try {
             fileAccess.cleanupTempFiles(dbFilePath)

@@ -2,14 +2,8 @@ import SwiftUI
 
 @main
 struct OneHundredVoltApp: App {
-    // Keychain 有 token 即视为已登录，UserDefaults 只是缓存
-    @State private var hasCompletedOnboarding: Bool = {
-        if KeychainService.load(forKey: KeychainService.authTokenKey) != nil {
-            UserDefaults.standard.set(true, forKey: "hasCompletedOnboarding")
-            return true
-        }
-        return UserDefaults.standard.bool(forKey: "hasCompletedOnboarding")
-    }()
+    // 只有完整同步成功后才完成入门；登录令牌本身不能代表本地内容已准备好。
+    @State private var hasCompletedOnboarding = UserDefaults.standard.bool(forKey: "hasCompletedOnboarding")
 
     init() {
         _ = AudioPlayerService.shared
@@ -66,6 +60,9 @@ struct RootView: View {
             if hasCompletedOnboarding {
                 HomeView()
                     .transition(.opacity)
+            } else if AfdianAPIService.shared.isLoggedIn {
+                CreatorSelectView(hasCompletedOnboarding: $hasCompletedOnboarding)
+                    .transition(.opacity)
             } else {
                 WelcomeView(hasCompletedOnboarding: $hasCompletedOnboarding)
                     .transition(.opacity)
@@ -73,6 +70,9 @@ struct RootView: View {
         }
         .animation(.easeInOut(duration: 0.3), value: hasCompletedOnboarding)
         .preferredColorScheme(.dark)
+        .task {
+            _ = await IncrementalUpdateCoordinator.shared.checkDue()
+        }
         .sheet(isPresented: $showRelogin) {
             LoginWebView(hasCompletedOnboarding: $hasCompletedOnboarding)
         }

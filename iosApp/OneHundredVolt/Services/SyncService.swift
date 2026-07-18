@@ -15,7 +15,7 @@ enum SyncState {
     case success
     case failed
 
-    /// Shared.SyncState → iOS SyncState（error 信息丢失，详情需 catch 后处理）
+    /// Shared.SyncState → iOS SyncState
     static func from(_ shared: Shared.SyncState) -> SyncState {
         if shared is Shared.SyncState.Idle { return .idle }
         if shared is Shared.SyncState.Success { return .success }
@@ -68,6 +68,9 @@ final class SyncService {
     private func registerCallback() {
         backend.setOnStateChangedCallback { [weak self] sharedState in
             Task { @MainActor in
+                if let failed = sharedState as? Shared.SyncState.Failed {
+                    SharedErrorBridge.handle(failed.error)
+                }
                 self?.state = SyncState.from(sharedState)
             }
         }
@@ -98,6 +101,60 @@ final class SyncService {
     }
 }
 
+/// iOS 启动检查和 Debug 手工检查共用的增量更新入口。
+@Observable
+final class IncrementalUpdateCoordinator {
+    static let shared = IncrementalUpdateCoordinator()
+
+    private let api = AfdianAPIService.shared
+    private let backend: Shared.IncrementalUpdateService
+
+    private init() {
+        backend = Shared.IncrementalUpdateService(
+            api: AfdianAPIService.shared.sharedBackend,
+            db: Shared.DatabaseService.companion.shared
+        )
+    }
+
+    func checkDue() async -> String {
+        guard api.isLoggedIn else { return "未登录，跳过增量检查" }
+        do {
+            let nowMs = Int64(Date().timeIntervalSince1970 * 1000)
+            let result = try await backend.checkDueAlbums(nowMs: nowMs)
+            let status = statusText(result)
+            NotificationCenter.default.post(name: .didIncrementalUpdate, object: nil)
+            return status
+        } catch {
+            return "增量检查失败：\(error.localizedDescription)"
+        }
+    }
+
+    func checkAll() async -> String {
+        guard api.isLoggedIn else { return "未登录，无法检查" }
+        do {
+            let nowMs = Int64(Date().timeIntervalSince1970 * 1000)
+            let result = try await backend.checkAllAlbums(nowMs: nowMs)
+            let status = statusText(result)
+            NotificationCenter.default.post(name: .didIncrementalUpdate, object: nil)
+            return status
+        } catch {
+            return "增量检查失败：\(error.localizedDescription)"
+        }
+    }
+
+    func markAllDue() {
+        Shared.DatabaseService.companion.shared.markAllAlbumsDue()
+    }
+
+    private func statusText(_ result: Shared.IncrementalUpdateResult) -> String {
+        if result.failures.isEmpty {
+            return "完成：新增 \(result.addedCount)，变更 \(result.changedCount)"
+        }
+        return "完成：新增 \(result.addedCount)，失败 \(result.failures.count)"
+    }
+}
+
 extension Notification.Name {
     static let didSyncComplete = Notification.Name("OneHundredVolt.didSyncComplete")
+    static let didIncrementalUpdate = Notification.Name("OneHundredVolt.didIncrementalUpdate")
 }

@@ -19,20 +19,37 @@
 set -e
 
 CONFIG="${1:-Release}"
+case "$CONFIG" in
+  Debug|Release) ;;
+  debug) CONFIG="Debug" ;;
+  release) CONFIG="Release" ;;
+  *) echo "Unsupported configuration: $CONFIG (expected Debug or Release)" >&2; exit 1 ;;
+esac
+FRAMEWORK_DIR="$(echo "${CONFIG:0:1}" | tr '[:upper:]' '[:lower:]')${CONFIG:1}Framework"
+
+if ! JAVA_21_HOME="$(/usr/libexec/java_home -v 21 2>/dev/null)"; then
+    echo "JDK 21 is required to build the shared iOS framework." >&2
+    exit 1
+fi
+export JAVA_HOME="$JAVA_21_HOME"
+export PATH="$JAVA_HOME/bin:$PATH"
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 SHARED_MODULE="$REPO_ROOT/shared"
 OUTPUT_DIR="$SHARED_MODULE/build/Shared.xcframework"
 WORK_DIR="$SHARED_MODULE/build/xcframework-work"
+NEW_OUTPUT_DIR="$WORK_DIR/Shared.xcframework"
 
-# 清理旧产物
-rm -rf "$OUTPUT_DIR"
 rm -rf "$WORK_DIR"
 mkdir -p "$WORK_DIR"
 
 echo "▶ 编译 KMP shared 模块（$CONFIG）..."
 cd "$REPO_ROOT"
-./gradlew :shared:assemble"$CONFIG" --quiet
+./gradlew \
+    :shared:link"$CONFIG"FrameworkIosArm64 \
+    :shared:link"$CONFIG"FrameworkIosX64 \
+    :shared:link"$CONFIG"FrameworkIosSimulatorArm64 \
+    --quiet
 
 # 拷贝 device + 两个 simulator framework
 DEVICE_FW="$WORK_DIR/device/Shared.framework"
@@ -41,9 +58,9 @@ SIM_ARM64_FW="$WORK_DIR/simulator-arm64/Shared.framework"
 
 mkdir -p "$(dirname "$DEVICE_FW")" "$(dirname "$SIM_X64_FW")" "$(dirname "$SIM_ARM64_FW")"
 
-cp -R "$SHARED_MODULE/build/bin/iosArm64/releaseFramework/Shared.framework" "$DEVICE_FW"
-cp -R "$SHARED_MODULE/build/bin/iosX64/releaseFramework/Shared.framework" "$SIM_X64_FW"
-cp -R "$SHARED_MODULE/build/bin/iosSimulatorArm64/releaseFramework/Shared.framework" "$SIM_ARM64_FW"
+cp -R "$SHARED_MODULE/build/bin/iosArm64/$FRAMEWORK_DIR/Shared.framework" "$DEVICE_FW"
+cp -R "$SHARED_MODULE/build/bin/iosX64/$FRAMEWORK_DIR/Shared.framework" "$SIM_X64_FW"
+cp -R "$SHARED_MODULE/build/bin/iosSimulatorArm64/$FRAMEWORK_DIR/Shared.framework" "$SIM_ARM64_FW"
 
 # 合并两个 simulator slices 为 fat framework
 FAT_SIM_FW="$WORK_DIR/simulator-fat/Shared.framework"
@@ -64,7 +81,10 @@ echo "▶ 生成 xcframework..."
 xcodebuild -create-xcframework \
     -framework "$DEVICE_FW" \
     -framework "$FAT_SIM_FW" \
-    -output "$OUTPUT_DIR"
+    -output "$NEW_OUTPUT_DIR"
+
+rm -rf "$OUTPUT_DIR"
+mv "$NEW_OUTPUT_DIR" "$OUTPUT_DIR"
 
 # 清理中间产物
 rm -rf "$WORK_DIR"

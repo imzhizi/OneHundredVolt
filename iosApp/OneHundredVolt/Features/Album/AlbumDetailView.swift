@@ -9,6 +9,7 @@ struct AlbumDetailView: View {
     @State private var postDetailURL: URL? = nil
     private let player = AudioPlayerService.shared
     private let progressStore = PlaybackProgressStore.shared
+    private let db = DatabaseService.shared
 
     init(album: Album) {
         self.album = album
@@ -84,7 +85,10 @@ struct AlbumDetailView: View {
                 }
             }
         }
-        .onAppear { viewModel.load() }
+        .onAppear {
+            viewModel.load()
+            db.markAlbumUpdatesRead(albumId: album.id)
+        }
         .onReceive(NotificationCenter.default.publisher(for: .navigateToHomePlaylist)) { _ in
             // 先关闭全屏播放器（如有），再 pop 回首页
             showPlayer = false

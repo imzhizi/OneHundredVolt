@@ -41,6 +41,9 @@ final class AfdianAPIService {
     /// 登录态：依赖 Shared.SecureStorage 检查 auth_token
     var isLoggedIn: Bool { backend.isLoggedIn }
 
+    /// 供 iOS 的 Shared 增量同步协调器复用同一个 Ktor 客户端和登录态。
+    var sharedBackend: Shared.AfdianApiService { backend }
+
     /// 登出：删除 token + 清 WKWebView cookie
     func logout() {
         backend.logout()
@@ -133,6 +136,7 @@ final class AfdianAPIService {
         if error is Shared.ApiError.NotLoggedIn { return .notLoggedIn }
         if error is Shared.ApiError.InvalidUrl { return .invalidURL }
         if error is Shared.ApiError.NoAudioUrl { return .noAudioURL }
+        if error is Shared.ApiError.NetworkError { return .apiError("网络连接失败，请稍后重试") }
         if let http = error as? Shared.ApiError.HttpError { return .httpError(Int(http.code)) }
         if let api = error as? Shared.ApiError.ApiResponseError { return .apiError(api.msg) }
         return .apiError("未知错误")

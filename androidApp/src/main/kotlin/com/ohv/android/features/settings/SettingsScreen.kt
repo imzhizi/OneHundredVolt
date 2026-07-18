@@ -24,17 +24,22 @@ import androidx.compose.ui.unit.sp
 import com.ohv.android.platform.AudioCacheService
 import com.ohv.android.platform.AudioPlayerManager
 import com.ohv.android.platform.AppUpdater
+import com.ohv.android.BuildConfig
 import com.ohv.android.components.UpdateDialog
 import com.ohv.android.theme.OhvColors
 import com.ohv.shared.api.AfdianApiService
+import com.ohv.shared.diagnostics.DebugDiagnostics
+import com.ohv.shared.sync.DebugCatalogFixtures
 import com.ohv.shared.db.DatabaseService
 import com.ohv.shared.platform.KeyValueStore
 import com.ohv.shared.platform.SecureStorage
 import com.ohv.shared.progress.PlaybackProgressStore
+import com.ohv.shared.sync.IncrementalUpdateService
 import com.ohv.shared.sync.SyncService
 import java.text.SimpleDateFormat
 import java.util.*
 import kotlin.math.roundToLong
+import kotlinx.coroutines.launch
 
 /**
  * 设置页（对应 iOS SettingsView.swift）
@@ -60,6 +65,10 @@ fun SettingsScreen(
     val playerManager = remember { AudioPlayerManager.shared }
     val audioCache = remember { AudioCacheService.shared }
     val syncService = remember { SyncService(api, db, kvStore) }
+    val incrementalUpdate = remember {
+        IncrementalUpdateService(api, db)
+    }
+    val coroutineScope = rememberCoroutineScope()
 
     // 实时读取状态
     val isLoggedIn by remember { derivedStateOf { api.isLoggedIn } }
@@ -71,6 +80,12 @@ fun SettingsScreen(
     var showLogoutAlert by remember { mutableStateOf(false) }
     var showClearDataAlert by remember { mutableStateOf(false) }
     var showClearCacheAlert by remember { mutableStateOf(false) }
+    var showDebugDialog by remember { mutableStateOf(false) }
+    var debugRefreshToken by remember { mutableIntStateOf(0) }
+    var incrementalStatus by remember { mutableStateOf<String?>(null) }
+    var deleteEpisodeId by remember { mutableStateOf("") }
+    var fixtureAlbumId by remember { mutableStateOf("") }
+    var fixtureJson by remember { mutableStateOf("") }
     var cacheSizeBytes by remember { mutableStateOf(0L) }
 
     // ── OTA 更新状态 ──────────────────────────────────────────────
@@ -261,6 +276,22 @@ fun SettingsScreen(
             }
 
             // ── 关于 ──────────────────────────────────────────────────────────
+            if (BuildConfig.DEBUG) {
+                SettingsSection(title = "调试诊断") {
+                    SettingsButton(
+                        icon = Icons.Default.BugReport,
+                        label = "打开诊断面板",
+                        iconTint = OhvColors.Accent,
+                        labelColor = OhvColors.Accent,
+                        onClick = {
+                            debugRefreshToken++
+                            showDebugDialog = true
+                        }
+                    )
+                }
+            }
+
+            // ── 关于 ──────────────────────────────────────────────────────────
             SettingsSection(title = "关于") {
                 SettingsRow(
                     icon = Icons.Default.Info,
@@ -321,6 +352,276 @@ fun SettingsScreen(
         }
     }
 
+    if (showDebugDialog) {
+        // The token is intentionally read when the dialog recomposes, so the
+        // panel can refresh without introducing a second logging state store.
+        @Suppress("UNUSED_VARIABLE")
+        val refresh = debugRefreshToken
+        fun applyFixtureTemplate(scenario: String) {
+            val albumId = fixtureAlbumId.trim()
+            if (albumId.isBlank()) {
+                incrementalStatus = "请先填写专辑 ID"
+                return
+            }
+            try {
+                fixtureJson = DebugCatalogFixtures.templateJson(
+                    albumId = albumId,
+                    scenario = scenario,
+                    existingItems = db.audioItemsForAlbum(albumId)
+                )
+                incrementalStatus = DebugCatalogFixtures.setJson(albumId, fixtureJson)
+                debugRefreshToken++
+            } catch (e: Exception) {
+                incrementalStatus = "fixture 生成失败：${e.message ?: "未知错误"}"
+            }
+        }
+        AlertDialog(
+            onDismissRequest = { showDebugDialog = false },
+            title = { Text("调试诊断", color = OhvColors.White) },
+            text = {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(max = 620.dp)
+                        .verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Text(
+                        "日志 ${DebugDiagnostics.count()} 条",
+                        color = OhvColors.SecondaryText,
+                        fontSize = 12.sp
+                    )
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(120.dp)
+                            .verticalScroll(rememberScrollState())
+                            .background(OhvColors.Background, RoundedCornerShape(8.dp))
+                            .padding(8.dp)
+                    ) {
+                        Text(
+                            DebugDiagnostics.exportText(120).ifBlank { "暂无诊断日志" },
+                            color = OhvColors.SecondaryText,
+                            fontSize = 10.sp,
+                            lineHeight = 14.sp
+                        )
+                    }
+                    Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                        TextButton(onClick = { DebugDiagnostics.clear(); debugRefreshToken++ }) {
+                            Text("清除日志", color = Color(0xFFFF9500))
+                        }
+                        TextButton(onClick = { debugRefreshToken++ }) {
+                            Text("刷新", color = OhvColors.Accent)
+                        }
+                    }
+                    Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                        TextButton(onClick = { progressStore.clearAll(); debugRefreshToken++ }) {
+                            Text("清除进度", color = OhvColors.SecondaryText)
+                        }
+                        TextButton(onClick = { clearAudioCache(); cacheSizeBytes = 0L; debugRefreshToken++ }) {
+                            Text("清除缓存", color = OhvColors.SecondaryText)
+                        }
+                    }
+                    Text("目录 fixture", color = OhvColors.White, fontSize = 12.sp)
+                    OutlinedTextField(
+                        value = fixtureAlbumId,
+                        onValueChange = { fixtureAlbumId = it },
+                        modifier = Modifier.fillMaxWidth(),
+                        label = { Text("专辑 ID") },
+                        singleLine = true,
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = OhvColors.Accent,
+                            unfocusedBorderColor = OhvColors.Separator,
+                            focusedLabelColor = OhvColors.Accent,
+                            unfocusedLabelColor = OhvColors.SecondaryText,
+                            focusedTextColor = OhvColors.White,
+                            unfocusedTextColor = OhvColors.White
+                        )
+                    )
+                    Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                        TextButton(onClick = {
+                            fixtureAlbumId = albums.firstOrNull()?.id.orEmpty()
+                            incrementalStatus = if (fixtureAlbumId.isBlank()) "没有可用专辑" else "已填入首条专辑 ID"
+                        }) {
+                            Text("填首条专辑", color = OhvColors.SecondaryText)
+                        }
+                        TextButton(
+                            enabled = fixtureAlbumId.isNotBlank() && fixtureJson.isNotBlank(),
+                            onClick = {
+                                try {
+                                    incrementalStatus = DebugCatalogFixtures.setJson(
+                                        fixtureAlbumId.trim(),
+                                        fixtureJson
+                                    )
+                                    debugRefreshToken++
+                                } catch (e: Exception) {
+                                    incrementalStatus = "fixture 应用失败：${e.message ?: "未知错误"}"
+                                }
+                            }
+                        ) {
+                            Text("应用 JSON", color = OhvColors.Accent)
+                        }
+                        TextButton(onClick = {
+                            val albumId = fixtureAlbumId.trim()
+                            if (albumId.isBlank()) {
+                                incrementalStatus = "请先填写专辑 ID"
+                            } else {
+                                DebugCatalogFixtures.clearFixture(albumId)
+                                fixtureJson = ""
+                                incrementalStatus = "已清除该专辑 fixture"
+                                debugRefreshToken++
+                            }
+                        }) {
+                            Text("清除 fixture", color = OhvColors.SecondaryText)
+                        }
+                    }
+                    OutlinedTextField(
+                        value = fixtureJson,
+                        onValueChange = { fixtureJson = it },
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(min = 72.dp, max = 120.dp),
+                        label = { Text("fixture JSON") },
+                        maxLines = 5,
+                        textStyle = LocalTextStyle.current.copy(fontSize = 10.sp),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = OhvColors.Accent,
+                            unfocusedBorderColor = OhvColors.Separator,
+                            focusedLabelColor = OhvColors.Accent,
+                            unfocusedLabelColor = OhvColors.SecondaryText,
+                            focusedTextColor = OhvColors.White,
+                            unfocusedTextColor = OhvColors.White
+                        )
+                    )
+                    Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                        TextButton(onClick = { applyFixtureTemplate(DebugCatalogFixtures.SCENARIO_NEW) }) {
+                            Text("新增", color = OhvColors.Accent)
+                        }
+                        TextButton(onClick = { applyFixtureTemplate(DebugCatalogFixtures.SCENARIO_CHANGED) }) {
+                            Text("变更", color = OhvColors.Accent)
+                        }
+                        TextButton(onClick = { applyFixtureTemplate(DebugCatalogFixtures.SCENARIO_EMPTY) }) {
+                            Text("空目录", color = Color(0xFFFF9500))
+                        }
+                        TextButton(onClick = { applyFixtureTemplate(DebugCatalogFixtures.SCENARIO_DUPLICATE) }) {
+                            Text("重复 ID", color = Color(0xFFFF9500))
+                        }
+                    }
+                    Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                        TextButton(onClick = { applyFixtureTemplate(DebugCatalogFixtures.SCENARIO_OMIT_LAST) }) {
+                            Text("缺最后一条", color = OhvColors.SecondaryText)
+                        }
+                        TextButton(onClick = { applyFixtureTemplate(DebugCatalogFixtures.SCENARIO_ERROR) }) {
+                            Text("模拟错误", color = Color(0xFFFF3B30))
+                        }
+                        TextButton(onClick = { applyFixtureTemplate(DebugCatalogFixtures.SCENARIO_TIMEOUT) }) {
+                            Text("模拟超时", color = Color(0xFFFF3B30))
+                        }
+                    }
+                    Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                        TextButton(onClick = {
+                            incrementalUpdate.markAllAlbumsDue()
+                            incrementalStatus = "已将所有专辑标记为待检查"
+                            debugRefreshToken++
+                        }) {
+                            Text("标记待检查", color = OhvColors.SecondaryText)
+                        }
+                        TextButton(
+                            enabled = isLoggedIn,
+                            onClick = {
+                                incrementalStatus = "增量检查中..."
+                                coroutineScope.launch {
+                                    val result = incrementalUpdate.checkAlbums(
+                                        albumIds = albums.map { it.id },
+                                        force = true
+                                    )
+                                    incrementalStatus = if (result.failures.isEmpty()) {
+                                        "完成：新增 ${result.addedCount}，变更 ${result.changedCount}"
+                                    } else {
+                                        "完成：新增 ${result.addedCount}，失败 ${result.failures.size}"
+                                    }
+                                    debugRefreshToken++
+                                }
+                            }
+                        ) {
+                            Text("立即检查", color = if (isLoggedIn) OhvColors.Accent else OhvColors.SecondaryText)
+                        }
+                    }
+                    Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                        TextButton(onClick = {
+                            db.markAllAlbumUpdatesRead()
+                            incrementalStatus = "已清除所有更新提醒"
+                            debugRefreshToken++
+                        }) {
+                            Text("清除提醒", color = OhvColors.SecondaryText)
+                        }
+                        TextButton(onClick = {
+                            deleteEpisodeId = audioItems.firstOrNull()?.id.orEmpty()
+                            incrementalStatus = if (deleteEpisodeId.isBlank()) {
+                                "没有可填入的本地单集"
+                            } else {
+                                "已填入首条单集 ID"
+                            }
+                        }) {
+                            Text("填首条 ID", color = OhvColors.SecondaryText)
+                        }
+                    }
+                    OutlinedTextField(
+                        value = deleteEpisodeId,
+                        onValueChange = { deleteEpisodeId = it },
+                        modifier = Modifier.fillMaxWidth(),
+                        label = { Text("单集 ID") },
+                        singleLine = true,
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = OhvColors.Accent,
+                            unfocusedBorderColor = OhvColors.Separator,
+                            focusedLabelColor = OhvColors.Accent,
+                            unfocusedLabelColor = OhvColors.SecondaryText,
+                            focusedTextColor = OhvColors.White,
+                            unfocusedTextColor = OhvColors.White
+                        )
+                    )
+                    TextButton(
+                        enabled = deleteEpisodeId.isNotBlank(),
+                        onClick = {
+                            val id = deleteEpisodeId.trim()
+                            val item = audioItems.firstOrNull { it.id == id }
+                            if (item == null) {
+                                incrementalStatus = "未找到单集：$id"
+                            } else {
+                                audioCache.removeCache(id)
+                                db.deleteAudioItem(id)
+                                incrementalStatus = "已删除本地单集：${item.title.take(20)}"
+                                deleteEpisodeId = ""
+                            }
+                            debugRefreshToken++
+                        }
+                    ) {
+                        Text("删除指定单集", color = Color(0xFFFF9500))
+                    }
+                    incrementalStatus?.let { status ->
+                        Text(status, color = OhvColors.SecondaryText, fontSize = 11.sp)
+                    }
+                    TextButton(onClick = {
+                        playerManager.clearAll()
+                        DebugCatalogFixtures.clearAll()
+                        db.clearAll()
+                        progressStore.clearAll()
+                        debugRefreshToken++
+                    }) {
+                        Text("清除数据库和播放状态", color = Color(0xFFFF3B30))
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { showDebugDialog = false }) {
+                    Text("关闭", color = OhvColors.Accent)
+                }
+            },
+            containerColor = OhvColors.CardBackground
+        )
+    }
+
     // ── 退出登录确认弹窗 ──────────────────────────────────────────────────────
     if (showLogoutAlert) {
         AlertDialog(
@@ -331,6 +632,7 @@ fun SettingsScreen(
                 TextButton(onClick = {
                     showLogoutAlert = false
                     playerManager.clearAll()
+                    DebugCatalogFixtures.clearAll()
                     progressStore.clearAll()
                     audioCache.clearCache()
                     db.clearAll()
@@ -359,8 +661,11 @@ fun SettingsScreen(
             confirmButton = {
                 TextButton(onClick = {
                     showClearDataAlert = false
+                    DebugCatalogFixtures.clearAll()
+                    playerManager.clearAll()
                     db.clearAll()
                     progressStore.clearAll()
+                    audioCache.clearCache()
                 }) {
                     Text("清除", color = Color(0xFFFF3B30))
                 }

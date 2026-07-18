@@ -45,8 +45,8 @@ struct RestorePlaylistTests {
         #expect(deps.service.duration == 100)
     }
 
-    @Test("有本地缓存时 restorePlaylist 触发 loadAndPlay（isLoading = true）")
-    @MainActor func triggersLoadWhenCacheExists() async {
+    @Test("有本地缓存时重启只恢复状态，不自动播放")
+    @MainActor func restoresStateWithoutAutoPlaying() async {
         let item = makeItem(id: "cached-restore", duration: 200)
         let deps = TestDeps(savedProgress: ["cached-restore": 30], playlistItems: [item])
         deps.cache.cachedURLMap["cached-restore"] = URL(string: "file:///tmp/cached-restore.mp3")!
@@ -57,15 +57,14 @@ struct RestorePlaylistTests {
             api: deps.api,
             progressStore: deps.store,
             audioCache: deps.cache,
-            defaults: deps.defaults
+            defaults: deps.defaults,
+            playlistItemResolver: deps.playlistItemResolver
         )
 
-        await Task.yield()
-        await Task.yield()
-
         #expect(svc.currentItem?.id == "cached-restore")
-        #expect(svc.isLoading == true)   // loadAndPlay 被触发
-        #expect(deps.api.fetchCallCount == 0)  // 有缓存，不调 API
+        #expect(svc.isLoading == false)
+        #expect(svc.isPlaying == false)
+        #expect(deps.api.fetchCallCount == 0)
     }
 
     @Test("无本地缓存时 restorePlaylist 只恢复状态，不触发 loadAndPlay")

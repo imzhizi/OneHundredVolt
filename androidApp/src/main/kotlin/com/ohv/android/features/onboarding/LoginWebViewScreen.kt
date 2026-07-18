@@ -48,12 +48,6 @@ fun LoginWebViewScreen(
     var isConfirming by remember { mutableStateOf(false) }
     var showError by remember { mutableStateOf(false) }
     var errorMessage by remember { mutableStateOf("") }
-    // 离开登录页后显示手动按钮
-    var showManualButton by remember { mutableStateOf(false) }
-
-    // 持有 WebView 引用，用于手动确认时读取 Cookie
-    var webViewRef by remember { mutableStateOf<WebView?>(null) }
-
     // ── 从 CookieManager 提取 token ──────────────────────────────────────────
     fun extractToken(): String? {
         val cookieStr = CookieManager.getInstance().getCookie("afdian.com") ?: return null
@@ -80,8 +74,7 @@ fun LoginWebViewScreen(
                 }
                 delay(500)
             }
-            // 轮询结束仍未找到：显示手动按钮
-            showManualButton = true
+            // 轮询结束仍未找到：保留页面，用户可点击「已登录，继续」手动验证
         }
     }
 
@@ -181,7 +174,6 @@ fun LoginWebViewScreen(
                                 val path = url?.let { android.net.Uri.parse(it).path } ?: return
                                 val isLoginPage = path == "/login" || path.startsWith("/login")
                                 if (!isLoginPage && url.contains("afdian.com")) {
-                                    showManualButton = true
                                     startPolling()
                                 }
                             }
@@ -193,7 +185,6 @@ fun LoginWebViewScreen(
                         }
 
                         loadUrl("https://afdian.com/login")
-                        webViewRef = this
                     }
                 }
             )
@@ -239,17 +230,6 @@ fun LoginWebViewScreen(
                         }
                     }
 
-                    // 备用按钮：跳过验证
-                    TextButton(
-                        onClick = onLoginSuccess,
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Text(
-                            "跳过，直接进入首页",
-                            color = OhvColors.SecondaryText,
-                            fontSize = 13.sp
-                        )
-                    }
                 }
             }
         }

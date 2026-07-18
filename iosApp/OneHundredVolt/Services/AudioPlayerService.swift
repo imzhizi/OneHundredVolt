@@ -23,19 +23,22 @@ final class AudioPlayerService {
     private let progressStore: PlaybackProgressStoring
     private let audioCache: AudioCaching
     private let defaults: UserDefaults
+    private let playlistItemResolver: (String) -> AudioItem?
 
     init(
         playerFactory: AudioPlayerFactory = LiveAudioPlayerFactory(),
         api: AudioAPIService = AfdianAPIService.shared,
         progressStore: PlaybackProgressStoring = PlaybackProgressStore.shared,
         audioCache: AudioCaching = AudioCacheService.shared,
-        defaults: UserDefaults = .standard
+        defaults: UserDefaults = .standard,
+        playlistItemResolver: @escaping (String) -> AudioItem? = { DatabaseService.shared.audioItem(id: $0) }
     ) {
         self.playerFactory = playerFactory
         self.api = api
         self.progressStore = progressStore
         self.audioCache = audioCache
         self.defaults = defaults
+        self.playlistItemResolver = playlistItemResolver
         setupAudioSession()
     }
 
@@ -105,7 +108,7 @@ final class AudioPlayerService {
         guard let ids = defaults.array(forKey: Self.playlistKey) as? [String],
               !ids.isEmpty else { return }
         // 从 Shared.DatabaseService 按 id 查
-        let items = ids.compactMap { DatabaseService.shared.audioItem(id: $0) }
+        let items = ids.compactMap(playlistItemResolver)
         guard !items.isEmpty else { return }
         playlist = items
         currentItem = items[0]
@@ -416,7 +419,7 @@ final class AudioPlayerService {
 
         // 替换并播放（iOS 16+ replaceCurrentItem API）
         let oldPlayer = self.player
-        oldPlayer?.replaceCurrentItem(with: newItem)
+        oldPlayer?.replaceCurrentItemForOhv(with: newItem)
         self.playerItem = newItem
         oldPlayer?.play()
 
@@ -512,14 +515,16 @@ final class AudioPlayerService {
             forInterval: CMTime(seconds: 0.5, preferredTimescale: 600),
             queue: .main
         ) { [weak self] time in
-            guard let self, self.isPlaying else { return }
-            self.currentTime = time.seconds
-            self.progressSaveCounter += 1
-            if self.progressSaveCounter >= 30 { // ~15 seconds (30 × 0.5s)
-                self.saveCurrentProgress()
-                self.progressSaveCounter = 0
+            Task { @MainActor [weak self] in
+                guard let self, self.isPlaying else { return }
+                self.currentTime = time.seconds
+                self.progressSaveCounter += 1
+                if self.progressSaveCounter >= 30 { // ~15 seconds (30 × 0.5s)
+                    self.saveCurrentProgress()
+                    self.progressSaveCounter = 0
+                }
+                NowPlayingService.shared.updateProgress(current: time.seconds, duration: self.duration)
             }
-            NowPlayingService.shared.updateProgress(current: time.seconds, duration: self.duration)
         }
 
         NotificationCenter.default.addObserver(

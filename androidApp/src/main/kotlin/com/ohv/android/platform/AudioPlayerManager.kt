@@ -12,6 +12,7 @@ import androidx.media3.session.SessionToken
 import com.google.common.util.concurrent.ListenableFuture
 import com.google.common.util.concurrent.MoreExecutors
 import com.ohv.shared.api.AfdianApiService
+import com.ohv.shared.diagnostics.DebugDiagnostics
 import com.ohv.shared.models.AudioItem
 import com.ohv.shared.platform.KeyValueStore
 import kotlinx.serialization.encodeToString
@@ -323,12 +324,14 @@ private const val LOUDNESS_BOOST_KEY = "loudness_boost_enabled"
     private suspend fun loadAndPlay(item: AudioItem) {
         progressStore.flushToDisk()
         _state.value = _state.value.copy(loadingItem = item)
+        DebugDiagnostics.log("player", "load requested", details = mapOf("postId" to item.id, "title" to item.title))
         try {
             // 优先使用本地缓存
             val cachedFile = audioCache.cachedFile(item.id)
             val playUrl: String
             if (cachedFile != null) {
                 playUrl = cachedFile.toURI().toString()
+                DebugDiagnostics.log("player", "using cached audio", details = mapOf("postId" to item.id))
             } else {
                 val remoteUrl = item.audioUrl ?: run {
                     val fetched = api.fetchAudioUrl(item.id)
@@ -336,6 +339,7 @@ private const val LOUDNESS_BOOST_KEY = "loudness_boost_enabled"
                     fetched
                 }
                 playUrl = remoteUrl
+                DebugDiagnostics.log("player", "using remote audio and caching", details = mapOf("postId" to item.id))
                 // 后台缓存，不阻塞播放
                 scope.launch(Dispatchers.IO) {
                     audioCache.cacheAudio(remoteUrl, item.id)
@@ -378,8 +382,13 @@ private const val LOUDNESS_BOOST_KEY = "loudness_boost_enabled"
 
             _state.value = _state.value.copy(playlist = _playlist.toList())
             persistPlaylist()
-        } catch (_: Exception) {
+        } catch (e: Exception) {
             _state.value = _state.value.copy(loadingItem = null)
+            DebugDiagnostics.log("player", "load failed", "ERROR", mapOf(
+                "postId" to item.id,
+                "errorType" to e::class.simpleName.orEmpty(),
+                "error" to (e.message ?: "unknown")
+            ))
         }
     }
 
@@ -428,12 +437,18 @@ private const val LOUDNESS_BOOST_KEY = "loudness_boost_enabled"
             ctrl.setPlaybackSpeed(playbackRate)
 
             _state.value = _state.value.copy(playlist = _playlist.toList())
-        } catch (_: Exception) {
+        } catch (e: Exception) {
             _state.value = _state.value.copy(loadingItem = null)
+            DebugDiagnostics.log("player", "restore failed", "ERROR", mapOf(
+                "postId" to item.id,
+                "errorType" to e::class.simpleName.orEmpty(),
+                "error" to (e.message ?: "unknown")
+            ))
         }
     }
 
     fun playImmediately(item: AudioItem) {
+        DebugDiagnostics.log("player", "play requested", details = mapOf("postId" to item.id, "title" to item.title))
         _playlist.removeAll { it.id == item.id }
         _playlist.add(0, item)
         _state.value = _state.value.copy(playlist = _playlist.toList())
@@ -548,7 +563,7 @@ private const val LOUDNESS_BOOST_KEY = "loudness_boost_enabled"
 
     fun playPrevious() {
         if (_state.value.currentTimeSec > 5.0) {
-            controller?.seekTo(0)
+            seekAndPersist(0L)
         }
     }
 
@@ -557,26 +572,49 @@ private const val LOUDNESS_BOOST_KEY = "loudness_boost_enabled"
         val target = (ctrl.currentPosition + seconds * 1000L).coerceAtMost(
             ctrl.duration.takeIf { it > 0 } ?: Long.MAX_VALUE
         )
-        ctrl.seekTo(target)
-        progressStore.flushToDisk()
+        seekAndPersist(target)
     }
 
     fun skipBackward(seconds: Int = 15) {
         val ctrl = controller ?: return
-        ctrl.seekTo((ctrl.currentPosition - seconds * 1000L).coerceAtLeast(0))
-        progressStore.flushToDisk()
+        seekAndPersist((ctrl.currentPosition - seconds * 1000L).coerceAtLeast(0L))
     }
 
     fun seekTo(seconds: Double) {
         val ctrl = controller ?: return
-        ctrl.seekTo((seconds * 1000).toLong())
+        val target = (seconds * 1000).toLong().coerceIn(0L, ctrl.duration.takeIf { it > 0 } ?: Long.MAX_VALUE)
+        seekAndPersist(target)
+    }
+
+    /**
+     * Media3 stops the polling loop while paused. Update the observable state
+     * synchronously after a seek so the progress bar and time labels do not
+     * remain at the pre-seek position.
+     */
+    private fun seekAndPersist(positionMs: Long) {
+        val ctrl = controller ?: return
+        val target = positionMs.coerceAtLeast(0L)
+        ctrl.seekTo(target)
+        val duration = ctrl.duration.takeIf { it > 0 } ?: _state.value.durationMs
+        _state.value = _state.value.copy(
+            currentTimeMs = target,
+            durationMs = duration
+        )
+        _state.value.currentItem?.let { item ->
+            progressStore.setProgress(target / 1000.0, item.id)
+        }
         progressStore.flushToDisk()
+        DebugDiagnostics.log("player", "seek persisted", details = mapOf(
+            "postId" to (_state.value.currentItem?.id ?: "unknown"),
+            "positionMs" to target.toString()
+        ))
     }
 
     fun setPlaybackRate(rate: Float) {
         kvStore.putFloat(PLAYBACK_RATE_KEY, rate)
         controller?.setPlaybackSpeed(rate)
         _state.value = _state.value.copy(playbackRate = rate)
+        DebugDiagnostics.log("player", "playback rate changed", details = mapOf("rate" to rate.toString()))
     }
 
     fun setLoudnessBoostEnabled(enabled: Boolean) {
@@ -593,10 +631,12 @@ private const val LOUDNESS_BOOST_KEY = "loudness_boost_enabled"
         if (minutes <= 0) {
             sleepEndMs = 0L
             _state.value = _state.value.copy(sleepRemainingSeconds = 0)
+            DebugDiagnostics.log("player", "sleep timer cleared")
             return
         }
         sleepEndMs = System.currentTimeMillis() + minutes * 60_000L
         _state.value = _state.value.copy(sleepRemainingSeconds = minutes * 60)
+        DebugDiagnostics.log("player", "sleep timer set", details = mapOf("minutes" to minutes.toString()))
     }
 
     fun clearAll() {
