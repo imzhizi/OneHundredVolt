@@ -1,10 +1,14 @@
-# v1.9 双通道 iOS 测试与 Debug 面板方案
+# v1.9 Debug 面板设计方案
 
 ## 目标
 
-保留两条互补、证据不混淆的 iOS 验证通道，并将 Android/iOS 的 Debug 面板收敛为仅在开发构建可用、可审计且不泄露敏感数据的诊断工具。
+将 Android/iOS 的 Debug 面板收敛为仅在开发构建可用、可审计且不泄露敏感数据的诊断工具。
 
-本方案不把 beta 系统上的人工/Computer Use 回归伪装成 XCTest 成功，也不把 Debug 面板当成生产环境的隐藏管理后台。
+本方案不把 Debug 面板当成生产环境的隐藏管理后台。
+
+## 测试方案引用
+
+测试范围、稳定版 macOS XCTest 与 beta + Computer Use 双通道、证据格式和环境故障分流，以 [测试方案](TEST_PLAN.md) 和 [执行手册](cross-platform-test-runbook.md) 为准。本设计只定义 Debug 面板的产品和技术边界，不重复测试流程。
 
 ## 非目标
 
@@ -12,67 +16,6 @@
 - 不在面板、fixture、日志或截图中保存登录凭据、cookie、token、音频直链、完整个人资料或设备标识符。
 - 不用 Debug 构建的启动/帧率数据给 Release 性能下结论；Android 官方明确不建议以 Debug 构建进行性能测量。[Android performance guidance](https://developer.android.com/topic/performance/measuring-performance)
 - 不用一次目录响应的缺页、空页或异常推断远端已删除本地单集。
-
-## 测试通道
-
-### 通道 A：macOS 正式版 + XCTest
-
-**目的**：提供可重复、可比较、可归档的自动化质量门禁。
-
-**环境**：稳定版 macOS、稳定版 Xcode、匹配的 iOS Simulator runtime。显式设置稳定版工具链，避免被 beta 覆盖。
-
-```bash
-export DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer
-./scripts/build-shared-framework.sh Debug
-./scripts/test-ios-tests.sh
-```
-
-**适用测试**：共享层单元测试、Swift 单元/集成测试、关键无登录 UI 流程、fixture 驱动的增量同步、回归性崩溃与状态恢复。
-
-**门禁证据**：命令退出状态、测试总数/失败数、完整 `.xcresult`（或明确标记为不可生成的日志证据）、失败时的 `XCTAttachment` 截图和文本。Xcode 的 XCTest/XCUIAutomation 适合自动化 UI 流程；测试计划可按开发和发布前阶段分别选择测试与配置。[XCTest](https://developer.apple.com/documentation/xctest/) [Xcode test plans](https://developer.apple.com/documentation/xcode/organizing-tests-to-improve-feedback)
-
-**推荐配置**：在 Xcode 新建两个 Test Plan，而不是复用一个无差别的 Test action。
-
-| Test Plan | 范围 | 运行频率 | 结果要求 |
-|---|---|---|---|
-| `OneHundredVolt-PR` | 共享单测、Swift 单测、确定性 fixture 与最短 UI smoke | 每次 PR/提交 | 全绿 |
-| `OneHundredVolt-Release` | PR 覆盖 + 关键 UI 流程、冷启动恢复、错误映射和性能相关测试 | 发布前 | 全绿，保存 `.xcresult` |
-
-为两份计划分别设置语言、地区、启动参数和诊断收集策略；在会失败的 UI 用例上保留截图/附件，避免把每次成功运行的敏感或高体积附件长期保存。Apple 的 Test Plan 支持按配置收集失败诊断、截图和附件。[Test plan diagnostics](https://developer.apple.com/documentation/xcode/organizing-tests-to-improve-feedback) [XCTAttachment](https://developer.apple.com/documentation/XCTest/adding-attachments-to-tests-activities-and-issues)
-
-### 通道 B：beta macOS/Xcode + Computer Use
-
-**目的**：尽早验证 beta SDK、系统 UI、WebView 登录、播放器交互和真实页面布局，发现尚无法稳定由 XCTest 覆盖的行为。
-
-**环境**：beta macOS、`/Applications/Xcode-beta.app`、Xcode GUI/DeviceHub 以及已授权的 Computer Use。显式设置 beta 工具链：
-
-```bash
-export DEVELOPER_DIR=/Applications/Xcode-beta.app/Contents/Developer
-./scripts/build-shared-framework.sh Debug
-```
-
-**执行方式**：
-
-1. 用 Xcode 或 DeviceHub 启动已安装的模拟器；记录设备型号和 runtime 版本。
-2. 用 Computer Use 执行可见的核心旅程：欢迎页、人工 WebView 登录、创作者同步、首页冷启动、专辑详情、播放/暂停、队列、速度和睡眠计时。
-3. 对每个关键状态保存截图和可见文本；同步场景记录前后创作者、专辑和音频数。
-4. 结束后把结果标记为 `exploratory passed`、`failed` 或 `blocked`，不得标为 `XCTest passed`。
-
-**故障分流**：`simctl`、CoreSimulatorService 或 simulator disk-image 服务无法使用时，先标记为工具链/运行时阻塞。若 Xcode GUI/DeviceHub 能运行 App，可继续执行 Computer Use 探索性验证；CLI XCTest、`xcodebuild test` 和 `simctl` 截图仍必须标记为 `not run`。GUI 启动成功不等价于 XCTest 已执行。
-
-**限制**：Computer Use 不应输入或保存账号密码，也不应执行退出登录、清空数据、清空缓存、删除元数据等破坏性操作，除非测试负责人明确授权该次数据重置。物理设备音频输出和锁屏控制仍需单独真机验证。
-
-### 通道共存规则
-
-| 维度 | 正式版 XCTest | beta + Computer Use |
-|---|---|---|
-| 主要价值 | 可重复门禁与回归基线 | beta 平台兼容性和真实交互探索 |
-| 登录处理 | 注入受控测试态或跳过需要真实账户的用例 | 测试人员手动登录，代理不得持有凭据 |
-| 结果产物 | `.xcresult`、JUnit/测试摘要、附件 | 截图、可见文本、步骤记录、状态计数 |
-| 发布结论 | 可作为自动化通过证据 | 仅补充人工验证，不能替代自动化门禁 |
-| 工具链故障 | 修复/替换 runtime 后重跑 | 标记阻塞，必要时用 GUI 验证非 CLI 能力 |
-
-两条通道使用同一份用例编号和期望，但分别保存运行环境和结论。最终报告必须显示各通道的 `passed`、`failed`、`blocked`、`not run`，禁止合并成单一“iOS 已通过”。
 
 ## Debug 面板设计原则
 
@@ -153,19 +96,13 @@ Release Android/iOS: no panel UI, no fixture resolver, no diagnostic export
 
 ## 实施阶段
 
-### Phase 1：测试通道和报告规范
-
-1. 在项目测试文档中维护上述双通道，不改变现有 beta 回归能力。
-2. 为稳定 Xcode 创建 PR/Release 两个 Test Plan，并把 `xcodebuild test` 产物归档为 CI 证据。
-3. 在测试报告模板中分列 `stable-xctest` 与 `beta-computer-use`，记录工具链版本与阻塞原因。
-
-### Phase 2：诊断能力收敛
+### Phase 1：诊断能力收敛
 
 1. 为现有 Debug 按钮补齐 `id`、风险、前置条件、确认要求与结构化结果。
 2. 将 Android/iOS 面板接到同一份共享能力描述；保留平台层展示差异。
 3. 将任意异常文本替换为错误类别和已审核的上下文，补充敏感字段回归测试。
 
-### Phase 3：构建与发布验证
+### Phase 2：构建与发布验证
 
 1. 增加 Android Debug/Release 与 iOS Debug/Release 的入口存在性测试。
 2. 检查 Release 产物不含 fixture 关键字、调试面板标题、测试入口和敏感日志格式。
@@ -173,9 +110,7 @@ Release Android/iOS: no panel UI, no fixture resolver, no diagnostic export
 
 ## 验收标准
 
-1. 稳定版 macOS 可以独立运行并归档 XCTest 结果；beta 通道可以独立执行 Computer Use 回归，两者不互相覆盖结论。
-2. beta CoreSimulator CLI 故障时，报告清晰区分“GUI 探索通过”和“XCTest 未执行”。
-3. Debug 面板只在 Debug 构建中出现；Release 静态和运行时检查均无入口、fixture 和导出能力。
-4. 所有破坏性操作有影响范围、二次确认和结果计数；未授权测试不改变用户数据。
-5. 导出的诊断信息与 Android Logcat/iOS OSLog 均不含凭据、token、cookie、音频 URL 或原始敏感异常文本。
-6. 新增诊断能力至少有一个 Shared 单测和 Android/iOS 各一个 UI 可见性或交互测试。
+1. Debug 面板只在 Debug 构建中出现；Release 静态和运行时检查均无入口、fixture 和导出能力。
+2. 所有破坏性操作有影响范围、二次确认和结果计数；未授权测试不改变用户数据。
+3. 导出的诊断信息与 Android Logcat/iOS OSLog 均不含凭据、token、cookie、音频 URL 或原始敏感异常文本。
+4. 新增诊断能力至少有一个 Shared 单测和 Android/iOS 各一个 UI 可见性或交互测试。

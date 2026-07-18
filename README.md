@@ -85,6 +85,7 @@ DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer \
 | [docs/test/cross-platform-test-runbook.md](docs/test/cross-platform-test-runbook.md) | 双端测试执行手册：环境排障、取证与安全边界 |
 | [docs/test/dual-channel-testing-and-debug-panel.md](docs/test/dual-channel-testing-and-debug-panel.md) | iOS 稳定版 XCTest 与 beta Computer Use 双通道，以及 Debug 面板设计方案 |
 | [docs/plans/v1.8-single-episode-updates.md](docs/plans/v1.8-single-episode-updates.md) | 单集增量更新、提醒和 Debug fixture 设计 |
+| [docs/plans/v1.9-debug-panel-design.md](docs/plans/v1.9-debug-panel-design.md) | v1.9 设计索引：引用 `docs/test/` 的完整方案 |
 
 ## 技术栈
 
