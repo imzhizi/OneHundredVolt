@@ -11,8 +11,9 @@ export ANDROID_HOME=/opt/homebrew/share/android-commandlinetools
 export https_proxy=http://127.0.0.1:7890
 export http_proxy=http://127.0.0.1:7890
 export all_proxy=socks5://127.0.0.1:7890
-export DEVELOPER_DIR=/Applications/Xcode-beta.app/Contents/Developer
 ```
+
+iOS 命令不使用机器默认 Xcode；在第 4 节选择稳定版 XCTest 或 beta Computer Use 通道后，再显式设置对应的 `DEVELOPER_DIR`。
 
 Android 构建：
 
@@ -107,21 +108,31 @@ iOS 单测可用脚本执行；脚本优先保存完整 `.xcresult`。如果 Xco
 8. fixture 验证完成后点击“清除 fixture”，重启应用确认进程内覆盖已失效，不影响正式远端目录。
 9. 若同一帖子同时出现在多个专辑，确认两个专辑都能显示该单集，重复检查不会反复增加未读数。
 
-## 4. iOS Xcode beta 功能矩阵
+## 4. iOS 双通道功能矩阵
 
-按 Android A-D 的同一业务顺序执行，补充以下 iOS 专项：
+Android A-D 的同一业务顺序在两个通道共用用例编号和期望，但产物与通过结论必须分开记录。
 
-1. 使用 `DEVELOPER_DIR=/Applications/Xcode-beta.app/Contents/Developer` 构建 Generic iOS device；确认 Shared.xcframework 的 device 和 simulator slice 都生成。
-2. 在 iPhone 模拟器或真机完成登录、同步、首页、专辑详情和播放主流程。
-3. 终止并重启应用，验证 Keychain 登录态、数据库、播放进度和队列恢复。
-4. 验证网络错误、401、无音频权限和空专辑目录的提示；错误不得被静默转成空成功。
-5. Debug 构建设置页显示诊断面板；Release 构建通过 `#if DEBUG` 排除该入口。
-6. 在 Debug 诊断面板重复 Android E-7/E-8 的 fixture 场景；fixture 仅存在于当前进程，退出登录或清除数据时也应被清理。
-7. 已接入的 iOS 启动检查遵循 6 小时阈值；后台 `BGAppRefreshTask` 尚未实现，不能把后台准时执行当作已验收能力。
+### A. macOS 正式版 + XCTest
+
+1. 使用稳定 Xcode：`DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer`。确认 Shared.xcframework 的 device 和 simulator slice 都生成。
+2. 运行共享/Swift 单测与可自动化 UI 用例，保存 `.xcresult`、测试总数、失败数和失败附件。
+3. 使用 PR 与 Release 两份 Xcode Test Plan 分别执行快速回归和发布前全量回归；Release 计划收集失败诊断。
+4. 终止并重启应用，验证 Keychain 登录态、数据库、播放进度和队列恢复；自动化无法安全持有真实登录态时，明确标记为人工/Computer Use 用例。
+5. 验证网络错误、401、无音频权限和空专辑目录的提示；错误不得被静默转成空成功。
+6. Debug 构建设置页显示诊断面板；Release 构建静态和运行时均无 `#if DEBUG` 面板入口、fixture 和导出能力。
+
+### B. beta 系统 + Computer Use
+
+1. 使用 `DEVELOPER_DIR=/Applications/Xcode-beta.app/Contents/Developer` 构建并在 Xcode/DeviceHub 启动模拟器，记录设备型号和 runtime 版本。
+2. 测试人员手工完成 WebView 登录后，用 Computer Use 验证同步、首页、专辑详情、播放、队列、速度、睡眠计时和冷启动恢复。
+3. 保存每个关键步骤的截图、可见文本及同步前后数据数量，结果标记为 `exploratory passed`、`failed`、`blocked` 或 `not run`。
+4. `simctl`/CoreSimulatorService/disk-image 服务异常时，将 CLI XCTest 和 `simctl` 证据标记为 `not run`；Xcode GUI/DeviceHub 的成功运行仅能证明探索性流程，不等价于 XCTest 通过。
+5. Debug 面板的 fixture 场景仅可在获得明确的测试数据授权后执行；fixture 必须进程内生效，退出、登出或清除数据后失效。
+6. 已接入的 iOS 启动检查遵循 6 小时阈值；后台 `BGAppRefreshTask` 尚未实现，不能把后台准时执行当作已验收能力。
 
 ## 5. 通过标准
 
 - P0：崩溃、登录态泄漏、凭据/音频 URL 泄漏、同步成功但数据损坏、播放不可恢复。必须阻断发布。
 - P1：主流程功能错误、进度丢失、队列错乱、401 未引导登录、后台播放失效。修复后才可发布。
 - P2：布局、提示文案、偶发重试、缓存统计不准确。可进入下一迭代，但必须登记。
-- 所有 P0/P1 用例通过，Android 单测和 Debug 构建通过，iOS Generic build 通过，才算本轮回归完成。
+- 所有 P0/P1 用例通过，Android 单测和 Debug 构建通过，稳定版 macOS XCTest 的可自动化用例通过并有归档结果，才算本轮回归完成。beta Computer Use 的结论单列为兼容性/探索性证据，不能覆盖未执行的 XCTest。

@@ -35,14 +35,12 @@ git status --short --branch
 
 export JAVA_HOME=/Library/Java/JavaVirtualMachines/temurin-21.jdk/Contents/Home
 export ANDROID_HOME=/opt/homebrew/share/android-commandlinetools
-export DEVELOPER_DIR=/Applications/Xcode-beta.app/Contents/Developer
 export https_proxy=http://127.0.0.1:7890
 export http_proxy=http://127.0.0.1:7890
 export all_proxy=socks5://127.0.0.1:7890
 
 "$JAVA_HOME/bin/java" -version
 adb devices
-xcodebuild -version
 ```
 
 Notes:
@@ -50,6 +48,7 @@ Notes:
 - Use JDK 21 for Android/Kotlin Multiplatform work. Do not alter the developer's global default JDK just to run this project.
 - Only export the proxy variables when the network requires them. Keep them out of committed scripts and app source.
 - Confirm the working tree before testing so generated output and pre-existing edits are not mistaken for test results.
+- Select exactly one iOS test channel below and set its own `DEVELOPER_DIR`; do not infer the selected Xcode from the machine default.
 
 ## Android Debug Workflow
 
@@ -83,6 +82,35 @@ adb exec-out cat /sdcard/ohv-window.xml
 
 Separate app crashes and functional errors from UIAutomator helper noise. When Android validation is complete, shut down the emulator if the next task needs its resources.
 
+## iOS Test Channels
+
+### Channel A: Stable macOS + XCTest
+
+Use this channel as the release-quality gate. It requires a stable macOS/Xcode installation and a compatible simulator runtime.
+
+```bash
+export DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer
+"$DEVELOPER_DIR/usr/bin/xcodebuild" -version
+./scripts/build-shared-framework.sh Debug
+./scripts/test-ios-tests.sh
+```
+
+Archive the `.xcresult` and test summary. A test run is passing only when XCTest reports its result; a successful GUI launch or manual walkthrough is not a substitute. Maintain a fast PR test plan and a wider release test plan so the same scheme can have different explicit scopes and diagnostics.
+
+### Channel B: beta macOS/Xcode + Computer Use
+
+Use this channel to inspect beta runtime behavior and manually authenticated workflows that the stable XCTest channel does not cover.
+
+```bash
+export DEVELOPER_DIR=/Applications/Xcode-beta.app/Contents/Developer
+"$DEVELOPER_DIR/usr/bin/xcodebuild" -version
+./scripts/build-shared-framework.sh Debug
+```
+
+Run the app with Xcode or DeviceHub, then use Computer Use for the visible user journey. Save screenshots, state counts, and exact interaction steps. Mark the result `exploratory passed`, `failed`, `blocked`, or `not run`; never report it as `XCTest passed`.
+
+If `simctl`, CoreSimulatorService, or the simulator disk-image service is unavailable while the Xcode GUI still works, continue only the GUI/Computer Use flow. CLI XCTest and `simctl` evidence remain `not run` until the stable toolchain can execute them.
+
 ## iOS Debug Workflow
 
 ### 1. Build the shared framework before the app
@@ -93,9 +121,9 @@ SIMULATOR_ID=<booted-simulator-udid> ./scripts/test-ios-simulator.sh
 ./scripts/test-ios-tests.sh
 ```
 
-The framework build must successfully produce compatible device and simulator slices before treating the iOS app build as valid. The shared-framework script builds into temporary output and swaps it only after a successful build; preserve that behavior.
+The framework build must successfully produce compatible device and simulator slices before treating the iOS app build as valid. The shared-framework script builds into temporary output and swaps it only after a successful build; preserve that behavior. Use the selected channel's `DEVELOPER_DIR`; its default is only a fallback.
 
-### 2. Xcode beta and simulator triage
+### 2. beta simulator triage
 
 Use the configured beta toolchain through `DEVELOPER_DIR`. A CoreSimulator command-line failure, such as an invalid CoreSimulator service connection or unavailable simulator disk-image service, is an environment blocker, not evidence of an app defect.
 
@@ -104,7 +132,7 @@ When the command-line simulator service is broken but Xcode's GUI can boot and r
 1. Use Xcode or DeviceHub to select a booted simulator and run the app.
 2. Record the simulator model and OS version from the GUI.
 3. Perform the manual login and core user journey in that app instance.
-4. Keep CLI-only assertions, including `xcodebuild test` and `simctl` screenshots, marked as unexecuted rather than inferring their results from GUI launch success.
+4. Keep CLI-only assertions, including `xcodebuild test` and `simctl` screenshots, marked as `not run` rather than inferring their results from GUI launch success.
 
 If neither CLI nor Xcode GUI can boot a compatible runtime, install or select the matching runtime before continuing. Do not rewrite app code to compensate for an Xcode/runtime mismatch.
 
@@ -151,7 +179,7 @@ Report each category as `passed`, `failed`, or `not run`; never collapse `not ru
 - `failed`: include reproduction, expected/actual behavior, and severity.
 - `not run`: include the exact blocker, such as destructive-operation approval, a missing simulator runtime, or unavailable XCTest infrastructure.
 
-Release readiness requires all P0 and P1 scenarios in `TEST_PLAN.md` to pass. The remaining gaps after the current core Debug regression are destructive settings flows, physical-device audio output, and any XCTest execution blocked by the local Xcode beta simulator service.
+Release readiness requires all P0 and P1 scenarios in `TEST_PLAN.md` to pass through the stable XCTest channel where they are automatable, with beta Computer Use evidence reported separately. The remaining gaps after the current core Debug regression are destructive settings flows, physical-device audio output, and any XCTest execution blocked by the local Xcode beta simulator service.
 
 ## Useful Commands
 
