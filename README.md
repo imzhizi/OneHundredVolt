@@ -82,6 +82,7 @@ DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer \
 | [docs/CHANGELOG.md](docs/CHANGELOG.md) | 版本变更日志 |
 | [docs/plans/v1.6-cross-platform-review.md](docs/plans/v1.6-cross-platform-review.md) | 当前进行中的 v1.6 实施计划 |
 | [docs/TEST_PLAN.md](docs/TEST_PLAN.md) | Android/iOS Debug、Release 和单集增量回归方案 |
+| [docs/skills/cross-platform-test-runbook.md](docs/skills/cross-platform-test-runbook.md) | 双端测试执行手册：环境排障、取证与安全边界 |
 | [docs/plans/v1.8-single-episode-updates.md](docs/plans/v1.8-single-episode-updates.md) | 单集增量更新、提醒和 Debug fixture 设计 |
 
 ## 技术栈
